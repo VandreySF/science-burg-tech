@@ -1,7 +1,7 @@
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import psycopg
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -43,27 +43,27 @@ def _decodificar_token_admin(token: str) -> dict:
 
 def get_admin_atual(
     credenciais: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-    db: sqlite3.Connection = Depends(get_db),
-) -> sqlite3.Row:
+    db: psycopg.Connection = Depends(get_db),
+) -> dict:
     if credenciais is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autenticado")
 
     claims = _decodificar_token_admin(credenciais.credentials)
     admin = db.execute(
-        "SELECT * FROM administradores WHERE id = ? AND ativo = 1", (claims["sub"],)
+        "SELECT * FROM administradores WHERE id = %s AND ativo = 1", (claims["sub"],)
     ).fetchone()
     if admin is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Administrador não encontrado ou inativo")
     return admin
 
 
-def exigir_papel_admin(admin: sqlite3.Row = Depends(get_admin_atual)) -> sqlite3.Row:
+def exigir_papel_admin(admin: dict = Depends(get_admin_atual)) -> dict:
     if admin["papel"] != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ação restrita a administradores")
     return admin
 
 
-def autenticar_admin_websocket(token: str, db: sqlite3.Connection) -> Optional[sqlite3.Row]:
+def autenticar_admin_websocket(token: str, db: psycopg.Connection) -> Optional[dict]:
     """Mesma verificação de get_admin_atual, mas devolvendo None em vez de
     levantar HTTPException — usada no handshake do WebSocket /ws/admin, que
     recebe o token por query param (o navegador não permite header
@@ -74,4 +74,4 @@ def autenticar_admin_websocket(token: str, db: sqlite3.Connection) -> Optional[s
         return None
     if claims.get("tipo_conta") != "admin":
         return None
-    return db.execute("SELECT * FROM administradores WHERE id = ? AND ativo = 1", (claims["sub"],)).fetchone()
+    return db.execute("SELECT * FROM administradores WHERE id = %s AND ativo = 1", (claims["sub"],)).fetchone()

@@ -1,38 +1,39 @@
-# Science Burger Tech 🍔🔬
+# Burger Tech
 
-Projeto acadêmico desenvolvido para aplicar conceitos de engenharia de software no contexto de um sistema para hamburgueria: site público de delivery, fluxo de pedido por mesa (QR code) e painel administrativo em tempo real.
-
-## Estrutura do repositório
+Sistema completo do Science Burger Tech: site público de delivery, fluxo de
+pedido por mesa (QR code) e painel administrativo — com um back-end próprio
+em Python.
 
 ```
-science-burg-tech/
-│
-├── .github/               # Templates de issues e pull requests
+burger-tech/
 ├── apps/
-│   ├── api/                # Back-end (Python + FastAPI + SQLite)
-│   └── web/                # Front-end (React 18 + Vite + TypeScript + Tailwind v4)
-├── database/                # (dentro de apps/api/) — schema, seed e o README do banco
-├── security/                # Documentação e checklist de segurança do time
-├── docs/                  # Documentação do projeto (requisitos, UML, arquitetura, etc.)
-├── slides/                # Apresentações do projeto
-├── tests/                 # Testes de integração e de sistema (além dos testes automatizados em apps/api/tests)
-├── SEGURANCA.md            # Decisões de segurança da implementação e limitações conhecidas
-├── guia-para-amigos.md      # Passo a passo de como rodar o projeto, em linguagem simples
-├── LICENSE
-└── .gitignore
+│   ├── web/   ← front-end (React 18 + Vite + TypeScript + Tailwind v4)
+│   └── api/   ← back-end (Python + FastAPI + PostgreSQL, hospedado no Neon)
+├── SEGURANCA.md        ← decisões de segurança e limitações conhecidas
+└── guia-para-amigos.md ← passo a passo em linguagem simples
 ```
 
-## Tecnologias
+Veja [apps/api/database/README.md](apps/api/database/README.md) para entender
+o desenho do banco de dados (o mais importante é o sistema de mesas/comandas)
+e [SEGURANCA.md](SEGURANCA.md) para as decisões de segurança.
 
-- **Backend:** Python + FastAPI + Uvicorn (WebSocket nativo para o painel em tempo real)
-- **Frontend:** React 18 + Vite + TypeScript + Tailwind v4
-- **Banco de dados:** SQLite (arquivo único, sem servidor separado — veja `apps/api/database/README.md` para o porquê)
+## Rodando em desenvolvimento
 
-## Como rodar o projeto
+Precisa de **Node.js** (18+), **Python** (3.11+) e uma conta gratuita no
+[Neon](https://neon.tech) (PostgreSQL sem instalar nada localmente). Os dois
+serviços (API e front-end) rodam em paralelo, em dois terminais separados.
 
-Precisa de **Node.js** (18+) e **Python** (3.11+) instalados. Os dois serviços (API e site) rodam em paralelo, em dois terminais separados — veja o passo a passo detalhado em [`guia-para-amigos.md`](./guia-para-amigos.md).
+### 0. Banco de dados (Neon)
 
-### Backend (API)
+Crie um projeto no [Neon](https://neon.tech). Um projeto novo já vem com uma
+branch padrão — é ela que serve de banco de desenvolvimento. Crie **uma
+segunda branch**, chamada por exemplo `test`, exclusiva para a suíte de
+testes automatizados (assim `pytest` nunca escreve por cima dos dados que
+você está usando pra desenvolver). Copie a connection string "pooled" de
+cada branch (Dashboard do projeto → Connect) — você vai usá-las no `.env` no
+próximo passo.
+
+### 1. Back-end (API)
 
 ```bash
 cd apps/api
@@ -40,14 +41,29 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows (no Linux/Mac: source .venv/bin/activate)
 pip install -r requirements.txt
 copy .env.example .env          # Windows (no Linux/Mac: cp .env.example .env)
+```
+
+Edite o `.env` recém-criado e cole as duas connection strings do Neon em
+`DATABASE_URL` (branch de desenvolvimento) e `DATABASE_URL_TESTE` (branch de
+testes). Depois:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-Na primeira vez que sobe, a API cria sozinha o banco a partir de `apps/api/database/schema.sql` e imprime no terminal os links `/m/<token>` de cada mesa. A API fica em `http://127.0.0.1:8000` (documentação interativa em `/docs`).
+Na primeira vez que sobe, a API aplica sozinha o `database/schema.sql` (13
+tabelas + seed de categorias/produtos/mesas) na branch de desenvolvimento e
+imprime no terminal os links `/m/<token>` de cada mesa (os QR codes apontam
+pra essas URLs, no front-end). A API fica em `http://127.0.0.1:8000` — a
+documentação interativa está em `http://127.0.0.1:8000/docs`.
 
-Crie o primeiro administrador do painel (uma vez só): `python -m app.criar_admin`
+Crie o primeiro administrador do painel (uma vez só):
 
-### Frontend (web)
+```bash
+python -m app.criar_admin
+```
+
+### 2. Front-end (web)
 
 Num segundo terminal, a partir da raiz do repositório:
 
@@ -56,17 +72,69 @@ npm install
 npm run dev
 ```
 
-Abre em `http://localhost:5173`. O Vite já redireciona `/api/*`, `/ws/*` e `/uploads/*` para a API — não precisa mexer em CORS nem URLs durante o desenvolvimento.
+Abre em `http://localhost:5173`. O Vite já está configurado para
+redirecionar `/api/*`, `/ws/*` e `/uploads/*` para `http://127.0.0.1:8000`
+(veja `apps/web/vite.config.ts`), então não precisa mexer em CORS nem em
+URLs durante o desenvolvimento.
 
-## Segurança
+## Configuração (`.env`)
 
-As decisões de segurança da implementação (hash de senha, limite de tentativas de login/registo, separação de tokens entre cliente e administrador, validação de upload por magic bytes, etc.) estão documentadas em [`SEGURANCA.md`](./SEGURANCA.md). O checklist do time está em [`security/security-checklist.md`](./security/security-checklist.md).
+Todos os segredos ficam em `apps/api/.env`, criado a partir do
+`.env.example`. As variáveis importantes:
 
-## Documentação
+| Variável | Para que serve |
+|---|---|
+| `AMBIENTE` | `desenvolvimento` ou `producao`. Em produção, a API se recusa a subir com segredos fracos ou CORS aberto. |
+| `JWT_SECRET_CLIENTE` / `JWT_SECRET_ADMIN` | Assinam os tokens de login. Precisam ter 32+ caracteres e ser **diferentes entre si**. |
+| `CORS_ORIGINS` | Domínios autorizados a chamar a API. |
+| `DATABASE_URL` | Connection string do PostgreSQL (Neon), branch de desenvolvimento. |
+| `DATABASE_URL_TESTE` | Connection string da branch do Neon usada só pelos testes automatizados. |
 
-A documentação do projeto (requisitos, diagramas UML, arquitetura, protótipos, plano de testes e atas de reunião) está em [`docs/`](./docs). As apresentações ficam em [`slides/`](./slides).
+Em desenvolvimento, deixar os segredos em branco é aceitável: a API gera um
+valor aleatório temporário e avisa no terminal (o efeito é que todo mundo é
+deslogado quando a API reinicia). Gere segredos de verdade com:
 
-## Testes
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+## As três áreas do sistema
+
+- **Site público** (`/`, `/cardapio`, `/login`, `/registo`, `/pedidos`, ...) —
+  cardápio, carrinho e pedidos de entrega/retirada.
+- **Mesa via QR code** (`/m/<token>`) — sem nenhum link no site público; cada
+  mesa tem o seu próprio link, impresso/gerado a partir do que a API mostra
+  ao criar o banco.
+- **Painel administrativo** (`/admin/login`, `/admin`) — login separado da
+  equipe da loja (tabela `administradores`, distinta de `usuarios`), também
+  sem link público. Mostra mesas, pedidos e o cardápio em tempo real via
+  WebSocket, e permite editar o cardápio (criar produto, marcar
+  indisponível, trocar foto).
+
+## Comandos úteis
+
+Na raiz do repositório:
+
+```bash
+npm run dev        # sobe o front-end
+npm run build      # checa os tipos (tsc) e gera a build de produção
+```
+
+Na pasta `apps/web` (se quiser só a checagem de tipos, sem gerar build):
+
+```bash
+npm run typecheck
+```
+
+Na pasta `apps/api` (com a venv ativada):
+
+```bash
+uvicorn app.main:app --reload   # sobe a API
+pytest                          # roda os testes do back-end
+python -m app.criar_admin       # cria um administrador
+```
+
+## Testes do back-end
 
 ```bash
 cd apps/api
@@ -74,12 +142,10 @@ cd apps/api
 pytest
 ```
 
-## Equipe
-
-- Nome 1 — Função
-- Nome 2 — Função
-- Nome 3 — Função
-
-## Licença
-
-Este projeto está sob a licença MIT. Veja [LICENSE](./LICENSE) para mais detalhes.
+São 39 testes cobrindo autenticação, pedidos, o fluxo de mesa/comanda,
+relatórios, a tela da cozinha e as proteções de segurança (bloqueio por
+força bruta no login e no registo, upload de arquivo disfarçado, separação
+entre token de cliente e de admin, limpeza do contador de tentativas em
+memória). Cada teste roda dentro de uma transação isolada na branch `test`
+do Neon, revertida ao final — nenhum teste deixa dado para trás nem afeta a
+branch de desenvolvimento.

@@ -7,9 +7,9 @@ import { useCart } from "@/app/hooks/useCart";
 import type { CartContext } from "@/app/types";
 
 export function RootLayout() {
-  const { cart, cartOpen, setCartOpen, addCart, changeQty, clearCart, totalQty, totalPrc } = useCart();
+  const { cart, cartOpen, setCartOpen, addCart, changeQty, clearCart, adicionarVarios, totalQty, totalPrc } = useCart();
 
-  const context: CartContext = { cart, addCart, changeQty, clearCart, totalQty, totalPrc };
+  const context: CartContext = { cart, addCart, changeQty, clearCart, adicionarVarios, totalQty, totalPrc };
 
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden" style={{ fontFamily: "'Inter',sans-serif" }}>

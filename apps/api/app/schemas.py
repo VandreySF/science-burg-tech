@@ -124,6 +124,18 @@ class EnderecoIn(BaseModel):
     cep: str
 
 
+class EnderecoOut(BaseModel):
+    id: int
+    rua: str
+    numero: str
+    complemento: Optional[str]
+    bairro: str
+    cidade: str
+    estado: str
+    cep: str
+    padrao: bool
+
+
 class ItemPedidoOut(BaseModel):
     id: int
     produto_id: Optional[int]
@@ -137,6 +149,7 @@ class PedidoCreateIn(BaseModel):
     tipo: Literal["entrega", "retirada"]
     itens: list[ItemPedidoIn] = Field(min_length=1)
     endereco: Optional[EnderecoIn] = None
+    endereco_id: Optional[int] = None
     metodo_pagamento: Optional[str] = None
     observacoes: Optional[str] = None
 
@@ -207,3 +220,44 @@ class MesaAdminOut(BaseModel):
 
 class FecharComandaIn(BaseModel):
     metodo: Literal["cartao_credito", "cartao_debito", "pix", "dinheiro"]
+
+
+# ── Relatórios (painel do dono) ───────────────────────────────────────────────
+
+
+class FaturamentoPorDiaOut(BaseModel):
+    data: str
+    total: float
+
+
+class FaturamentoPorTipoOut(BaseModel):
+    tipo: str
+    total: float
+
+
+class ProdutoMaisVendidoOut(BaseModel):
+    nome_produto: str
+    quantidade: int
+    total: float
+
+
+class PagamentoPorMetodoOut(BaseModel):
+    metodo: str
+    total: float
+
+
+class PedidosPorHoraOut(BaseModel):
+    hora: int
+    quantidade: int
+
+
+class RelatorioOut(BaseModel):
+    periodo_dias: int
+    faturamento_total: float
+    total_pedidos: int
+    ticket_medio: float
+    faturamento_por_dia: list[FaturamentoPorDiaOut]
+    faturamento_por_tipo: list[FaturamentoPorTipoOut]
+    produtos_mais_vendidos: list[ProdutoMaisVendidoOut]
+    pagamentos_por_metodo: list[PagamentoPorMetodoOut]
+    pedidos_por_hora: list[PedidosPorHoraOut]

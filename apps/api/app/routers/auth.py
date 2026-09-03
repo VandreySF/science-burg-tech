@@ -1,5 +1,4 @@
-import sqlite3
-
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.auth_cliente import (
@@ -16,7 +15,7 @@ from app.schemas import LoginIn, RegistoIn, TokenOut, UsuarioOut
 router = APIRouter(prefix="/auth", tags=["autenticação de cliente"])
 
 
-def _linha_para_usuario(linha: sqlite3.Row) -> UsuarioOut:
+def _linha_para_usuario(linha: dict) -> UsuarioOut:
     return UsuarioOut(id=linha["id"], nome=linha["nome"], email=linha["email"], telefone=linha["telefone"])
 
 
@@ -41,7 +40,7 @@ def _chave_limite_registo(request: Request) -> str:
 
 
 @router.post("/registo", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
-def registar(dados: RegistoIn, request: Request, db: sqlite3.Connection = Depends(get_db)) -> TokenOut:
+def registar(dados: RegistoIn, request: Request, db: psycopg.Connection = Depends(get_db)) -> TokenOut:
     chave = _chave_limite_registo(request)
 
     bloqueado_por = segundos_de_bloqueio(chave)
@@ -52,7 +51,7 @@ def registar(dados: RegistoIn, request: Request, db: sqlite3.Connection = Depend
             headers={"Retry-After": str(bloqueado_por)},
         )
 
-    existente = db.execute("SELECT id FROM usuarios WHERE email = ?", (dados.email,)).fetchone()
+    existente = db.execute("SELECT id FROM usuarios WHERE email = %s", (dados.email,)).fetchone()
     if existente is not None:
         # Aqui ainda dá para descobrir se um e-mail tem conta (a resposta diz
         # "já existe"), diferente do /login — esconder isso de verdade exigiria
@@ -63,20 +62,19 @@ def registar(dados: RegistoIn, request: Request, db: sqlite3.Connection = Depend
         registrar_falha(chave)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Já existe uma conta com este e-mail")
 
-    cursor = db.execute(
-        "INSERT INTO usuarios (nome, email, senha_hash, telefone) VALUES (?, ?, ?, ?)",
+    usuario = db.execute(
+        "INSERT INTO usuarios (nome, email, senha_hash, telefone) VALUES (%s, %s, %s, %s) RETURNING *",
         (dados.nome, dados.email, hash_senha(dados.senha), dados.telefone),
-    )
+    ).fetchone()
     db.commit()
     registrar_sucesso(chave)
 
-    usuario = db.execute("SELECT * FROM usuarios WHERE id = ?", (cursor.lastrowid,)).fetchone()
     token = criar_token_cliente(usuario["id"], usuario["email"])
     return TokenOut(access_token=token, usuario=_linha_para_usuario(usuario))
 
 
 @router.post("/login", response_model=TokenOut)
-def login(dados: LoginIn, request: Request, db: sqlite3.Connection = Depends(get_db)) -> TokenOut:
+def login(dados: LoginIn, request: Request, db: psycopg.Connection = Depends(get_db)) -> TokenOut:
     chave = _chave_limite(request, dados.email)
 
     bloqueado_por = segundos_de_bloqueio(chave)
@@ -87,7 +85,7 @@ def login(dados: LoginIn, request: Request, db: sqlite3.Connection = Depends(get
             headers={"Retry-After": str(bloqueado_por)},
         )
 
-    usuario = db.execute("SELECT * FROM usuarios WHERE email = ?", (dados.email,)).fetchone()
+    usuario = db.execute("SELECT * FROM usuarios WHERE email = %s", (dados.email,)).fetchone()
 
     if usuario is None:
         # Gasta o mesmo tempo do caminho "senha errada" para não entregar,
@@ -106,5 +104,5 @@ def login(dados: LoginIn, request: Request, db: sqlite3.Connection = Depends(get
 
 
 @router.get("/me", response_model=UsuarioOut)
-def eu(usuario: sqlite3.Row = Depends(get_usuario_atual)) -> UsuarioOut:
+def eu(usuario: dict = Depends(get_usuario_atual)) -> UsuarioOut:
     return _linha_para_usuario(usuario)

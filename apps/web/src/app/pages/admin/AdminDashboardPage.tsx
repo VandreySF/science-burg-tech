@@ -4,6 +4,7 @@ import { useAdminAuth } from "@/app/hooks/useAdminAuth";
 import { useAdminWebSocket } from "@/app/hooks/useAdminWebSocket";
 import { adminAlterarStatusPedido, adminFecharComanda, adminListarMesas, adminListarPedidos } from "@/app/lib/api";
 import { AdminCardapioPanel } from "@/app/pages/admin/AdminCardapioPanel";
+import { AdminRelatoriosPanel } from "@/app/pages/admin/AdminRelatoriosPanel";
 // MesaAdminApi é definido em lib/api.ts (é um alias de MesaComandaApi), não em
 // types.ts — importar do lugar errado quebrava a checagem de tipos.
 import type { MesaAdminApi } from "@/app/lib/api";
@@ -29,7 +30,7 @@ const STATUS_MESA_COR: Record<string, string> = {
 };
 
 export function AdminDashboardPage() {
-  const { token } = useAdminAuth();
+  const { token, administrador } = useAdminAuth();
   const [mesas, setMesas] = useState<MesaAdminApi[]>([]);
   const [pedidos, setPedidos] = useState<PedidoAdminApi[]>([]);
   const [filtroTipo, setFiltroTipo] = useState<"todos" | "entrega" | "retirada">("todos");
@@ -37,7 +38,7 @@ export function AdminDashboardPage() {
   const [metodoFechamento, setMetodoFechamento] = useState("pix");
   const [fechando, setFechando] = useState(false);
   const [conectado, setConectado] = useState(false);
-  const [aba, setAba] = useState<"operacao" | "cardapio">("operacao");
+  const [aba, setAba] = useState<"operacao" | "cardapio" | "relatorios">("operacao");
 
   const recarregar = useCallback(() => {
     if (!token) return;
@@ -87,8 +88,11 @@ export function AdminDashboardPage() {
             [
               ["operacao", "Mesas & Pedidos"],
               ["cardapio", "Cardápio"],
+              ["relatorios", "Relatórios"],
             ] as const
-          ).map(([valor, label]) => (
+          )
+            .filter(([valor]) => valor !== "relatorios" || administrador?.papel === "admin")
+            .map(([valor, label]) => (
             <button
               key={valor}
               onClick={() => setAba(valor)}
@@ -108,6 +112,8 @@ export function AdminDashboardPage() {
       </div>
 
       {aba === "cardapio" && <AdminCardapioPanel />}
+
+      {aba === "relatorios" && administrador?.papel === "admin" && <AdminRelatoriosPanel />}
 
       {aba === "operacao" && (
         <>

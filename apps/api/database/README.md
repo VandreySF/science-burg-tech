@@ -1,10 +1,10 @@
 # Banco de dados — burger-tech
 
-Este documento explica a estrutura do arquivo `schema.sql` (SQLite): o que cada tabela representa, o que cada coluna faz, e como funciona o sistema de mesas. Nada disso está ligado ao front-end React ainda — é só o banco.
+Este documento explica a estrutura do arquivo `schema.sql` (PostgreSQL, hospedado no [Neon](https://neon.tech)): o que cada tabela representa, o que cada coluna faz, e como funciona o sistema de mesas. Nada disso está ligado ao front-end React ainda — é só o banco.
 
-## Por que SQLite
+## Por que PostgreSQL (via Neon)
 
-SQLite guarda o banco inteiro em um único arquivo (`.db`), sem precisar instalar nem manter um servidor rodando. Para o tamanho atual do projeto isso é uma vantagem: você roda localmente, versiona o arquivo se quiser, e sobe pra produção depois sem dor. A diferença prática para PostgreSQL/MySQL: os IDs aqui são números inteiros que crescem sozinhos (`AUTOINCREMENT`) em vez de UUID — mais simples, e o SQLite não tem um gerador de UUID nativo — e o banco só ativa a verificação de chaves estrangeiras se a aplicação mandar `PRAGMA foreign_keys = ON;` logo ao abrir a conexão (por isso essa linha está no topo do arquivo — repita-a no código do backend também).
+O projeto começou em SQLite (um arquivo local, sem servidor) e migrou para PostgreSQL quando o time precisou de um banco compartilhado entre várias pessoas e ambientes (cada um rodando a API na própria máquina, todos apontando pro mesmo banco). O Neon hospeda o Postgres de graça e oferece "branches" do banco (como branches de git) — o projeto usa uma branch para desenvolvimento e outra, isolada, só para os testes automatizados. Os IDs continuam números inteiros que crescem sozinhos (`GENERATED ALWAYS AS IDENTITY`, o equivalente em Postgres ao `AUTOINCREMENT` do SQLite) — mais simples que UUID e sem exigir gerador de UUID. Diferente do SQLite, o Postgres sempre aplica chaves estrangeiras; não existe um interruptor equivalente ao `PRAGMA foreign_keys` para esquecer de ligar.
 
 ## Visão geral das tabelas
 
@@ -60,7 +60,7 @@ A mesa física em si — permanente, não muda com o tempo.
 | `status` | `livre`, `ocupada`, `reservada` ou `inativa` (mesa quebrada/fora de uso) |
 | `qr_token` | um código único por mesa, pensado para gerar um QR code que o cliente escaneia e cai direto no cardápio já identificando a mesa — sem precisar digitar o número |
 
-> Os `qr_token` do seed (`mesa-01-a1b2c3` etc.) são só exemplo, previsíveis de propósito para dar pra testar. Antes de usar de verdade, troque por tokens aleatórios e longos (ex.: gerados com `secrets.token_urlsafe(24)` em Python) — é isso que impede alguém de "adivinhar" o link de uma mesa que não é a dela.
+> Os `qr_token` do seed (`mesa-01-a1b2c3` etc.) são só exemplo, previsíveis de propósito para dar pra testar. A própria API troca cada um por um token aleatório longo (`secrets.token_urlsafe(24)`) assim que cria as tabelas pela primeira vez num banco novo (`_rotacionar_qr_tokens_do_seed`, em `app/db.py`) — é isso que impede alguém de "adivinhar" o link de uma mesa que não é a dela.
 
 ### comandas
 

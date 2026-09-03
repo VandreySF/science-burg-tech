@@ -21,7 +21,8 @@ Se alguém perguntar "o que é esse projeto", a explicação simples é:
 | **Vite** | O programa que roda o React na sua máquina enquanto você desenvolve, e que depois "empacota" tudo pra colocar no ar. Pensa nele como o motor por trás do React. |
 | **TypeScript** | JavaScript com um corretor automático a mais — avisa erro antes de rodar o código. |
 | **FastAPI** | A ferramenta em Python que faz a "parte de trás": recebe os pedidos, confere login, fala com o banco de dados. É o que o React conversa por trás das cortinas. |
-| **SQLite** | O banco de dados — mas em vez de precisar instalar um programa de banco separado, é só um arquivo (`burger_tech.db`) que já vem pronto no projeto. |
+| **PostgreSQL** | O banco de dados de verdade que guarda tudo (pedidos, usuários, mesas). Em vez de instalar um programa no PC, o projeto usa o **Neon**, que hospeda o banco de graça na nuvem. |
+| **Neon** | O serviço (gratuito) que hospeda o PostgreSQL do projeto. Você cria uma conta, cria um projeto, e cola o "endereço" do banco (a connection string) no `.env`. |
 | **Node.js** | O programa que precisa estar instalado no PC pra rodar o React/Vite. Sem ele, a parte visual não liga. |
 | **Python** | O programa que precisa estar instalado pra rodar o back-end (FastAPI). |
 | **.env** | Um arquivo de configuração com senhas/segredos do projeto. Cada pessoa cria o seu localmente — nunca é o mesmo pra todo mundo, e nunca deve ser compartilhado publicamente. |
@@ -42,11 +43,19 @@ rodando junto.
    to PATH"** antes de instalar, senão os comandos não funcionam depois.
 3. Um editor de código, se quiser mexer — [VS Code](https://code.visualstudio.com)
    é o mais comum.
-
-Não precisa instalar banco de dados separado — o SQLite já vem dentro do
-projeto.
+4. Uma conta gratuita no [Neon](https://neon.tech) — é o banco de dados do
+   projeto, na nuvem (não precisa instalar nada no PC pra isso).
 
 ## Passo a passo pra colocar pra funcionar
+
+### Passo 0 — criar o banco de dados no Neon
+
+Crie uma conta em [neon.tech](https://neon.tech) e um projeto novo (pode
+escolher qualquer nome e região). O projeto já vem com uma branch pronta —
+essa é o seu banco de desenvolvimento. Se for rodar os testes automatizados,
+crie mais uma branch (ex.: `test`) exclusiva pra isso. No painel do projeto,
+clique em "Connect" em cada branch e copie a connection string — você vai
+usar no passo seguinte.
 
 Depois de descompactar o zip, abrir **dois terminais** (dois separados,
 ambos dentro da pasta `burger-tech`) e deixar os dois rodando ao mesmo
@@ -60,13 +69,19 @@ python -m venv .venv
 .venv\Scripts\activate          # no Windows. No Mac/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 copy .env.example .env          # no Windows. No Mac/Linux: cp .env.example .env
+```
+
+Abra o `.env` que acabou de ser criado e cole as connection strings do Neon
+em `DATABASE_URL` (e `DATABASE_URL_TESTE`, se for rodar os testes). Só
+depois disso, suba a API:
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-Na primeira vez que sobe, ele cria sozinho o banco de dados a partir do
-`schema.sql` e mostra no terminal os links de cada mesa (pra gerar QR code
-depois). Deixa esse terminal aberto — ele fica escutando em
-`http://127.0.0.1:8000`.
+Na primeira vez que sobe, ele aplica sozinho o `schema.sql` no banco do Neon
+e mostra no terminal os links de cada mesa (pra gerar QR code depois). Deixa
+esse terminal aberto — ele fica escutando em `http://127.0.0.1:8000`.
 
 Se for usar o painel administrativo, crie o primeiro login de admin (uma
 vez só, com o back-end já rodando):

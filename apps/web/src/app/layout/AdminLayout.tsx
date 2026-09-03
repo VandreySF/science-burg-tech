@@ -1,5 +1,5 @@
-import { LogOut } from "lucide-react";
-import { Navigate, Outlet } from "react-router";
+import { ChefHat, LogOut } from "lucide-react";
+import { Link, Navigate, Outlet } from "react-router";
 import { useAdminAuth } from "@/app/hooks/useAdminAuth";
 
 export function AdminLayout() {
@@ -20,12 +20,20 @@ export function AdminLayout() {
               {administrador.nome} · {administrador.papel}
             </p>
           </div>
-          <button
-            onClick={logout}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-          >
-            <LogOut size={14} /> Sair
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/admin/cozinha"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+            >
+              <ChefHat size={14} /> Cozinha
+            </Link>
+            <button
+              onClick={logout}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+            >
+              <LogOut size={14} /> Sair
+            </button>
+          </div>
         </div>
       </header>
       <Outlet />

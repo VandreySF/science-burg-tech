@@ -1,8 +1,8 @@
 import secrets
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import psycopg
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -70,13 +70,13 @@ def _decodificar_token_cliente(token: str) -> dict:
 
 def get_usuario_atual(
     credenciais: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-    db: sqlite3.Connection = Depends(get_db),
-) -> sqlite3.Row:
+    db: psycopg.Connection = Depends(get_db),
+) -> dict:
     if credenciais is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Não autenticado")
 
     claims = _decodificar_token_cliente(credenciais.credentials)
-    usuario = db.execute("SELECT * FROM usuarios WHERE id = ?", (claims["sub"],)).fetchone()
+    usuario = db.execute("SELECT * FROM usuarios WHERE id = %s", (claims["sub"],)).fetchone()
     if usuario is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuário não encontrado")
     return usuario
@@ -84,12 +84,12 @@ def get_usuario_atual(
 
 def get_usuario_opcional(
     credenciais: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-    db: sqlite3.Connection = Depends(get_db),
-) -> Optional[sqlite3.Row]:
+    db: psycopg.Connection = Depends(get_db),
+) -> Optional[dict]:
     if credenciais is None:
         return None
     try:
         claims = _decodificar_token_cliente(credenciais.credentials)
     except HTTPException:
         return None
-    return db.execute("SELECT * FROM usuarios WHERE id = ?", (claims["sub"],)).fetchone()
+    return db.execute("SELECT * FROM usuarios WHERE id = %s", (claims["sub"],)).fetchone()

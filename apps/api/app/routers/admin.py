@@ -1,8 +1,8 @@
 import secrets
-import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
+import psycopg
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 
 from app.auth_admin import criar_token_admin, exigir_papel_admin, get_admin_atual
@@ -72,7 +72,7 @@ def _conteudo_bate_com_tipo(conteudo: bytes, content_type: str) -> bool:
 router = APIRouter(prefix="/admin", tags=["administração"])
 
 
-def _linha_para_admin(linha: sqlite3.Row) -> AdministradorOut:
+def _linha_para_admin(linha: dict) -> AdministradorOut:
     return AdministradorOut(id=linha["id"], nome=linha["nome"], email=linha["email"], papel=linha["papel"])
 
 
@@ -82,7 +82,7 @@ def _chave_limite_admin(request: Request, email: str) -> str:
 
 
 @router.post("/auth/login", response_model=AdminTokenOut)
-def login_admin(dados: AdminLoginIn, request: Request, db: sqlite3.Connection = Depends(get_db)) -> AdminTokenOut:
+def login_admin(dados: AdminLoginIn, request: Request, db: psycopg.Connection = Depends(get_db)) -> AdminTokenOut:
     chave = _chave_limite_admin(request, dados.email)
 
     bloqueado_por = segundos_de_bloqueio(chave)
@@ -94,7 +94,7 @@ def login_admin(dados: AdminLoginIn, request: Request, db: sqlite3.Connection = 
         )
 
     admin = db.execute(
-        "SELECT * FROM administradores WHERE email = ? AND ativo = 1", (dados.email,)
+        "SELECT * FROM administradores WHERE email = %s AND ativo = 1", (dados.email,)
     ).fetchone()
 
     if admin is None:
@@ -112,7 +112,7 @@ def login_admin(dados: AdminLoginIn, request: Request, db: sqlite3.Connection = 
 
 
 @router.get("/auth/me", response_model=AdministradorOut)
-def admin_atual(admin: sqlite3.Row = Depends(get_admin_atual)) -> AdministradorOut:
+def admin_atual(admin: dict = Depends(get_admin_atual)) -> AdministradorOut:
     return _linha_para_admin(admin)
 
 
@@ -123,8 +123,8 @@ def admin_atual(admin: sqlite3.Row = Depends(get_admin_atual)) -> AdministradorO
 def listar_pedidos_admin(
     tipo: Optional[str] = None,
     status_filtro: Optional[str] = None,
-    _admin: sqlite3.Row = Depends(get_admin_atual),
-    db: sqlite3.Connection = Depends(get_db),
+    _admin: dict = Depends(get_admin_atual),
+    db: psycopg.Connection = Depends(get_db),
 ) -> list[PedidoAdminOut]:
     sql = """
         SELECT p.*, u.nome AS usuario_nome, m.numero AS mesa_numero
@@ -136,10 +136,10 @@ def listar_pedidos_admin(
     """
     parametros: list[str] = []
     if tipo:
-        sql += " AND p.tipo = ?"
+        sql += " AND p.tipo = %s"
         parametros.append(tipo)
     if status_filtro:
-        sql += " AND p.status = ?"
+        sql += " AND p.status = %s"
         parametros.append(status_filtro)
     sql += " ORDER BY p.criado_em DESC"
 
@@ -157,8 +157,8 @@ def listar_pedidos_admin(
 async def alterar_status_pedido(
     pedido_id: int,
     dados: PedidoStatusIn,
-    _admin: sqlite3.Row = Depends(get_admin_atual),
-    db: sqlite3.Connection = Depends(get_db),
+    _admin: dict = Depends(get_admin_atual),
+    db: psycopg.Connection = Depends(get_db),
 ) -> PedidoAdminOut:
     linha = db.execute(
         """
@@ -167,14 +167,14 @@ async def alterar_status_pedido(
         LEFT JOIN usuarios u ON u.id = p.usuario_id
         LEFT JOIN comandas c ON c.id = p.comanda_id
         LEFT JOIN mesas m ON m.id = c.mesa_id
-        WHERE p.id = ?
+        WHERE p.id = %s
         """,
         (pedido_id,),
     ).fetchone()
     if linha is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pedido não encontrado")
 
-    db.execute("UPDATE pedidos SET status = ? WHERE id = ?", (dados.status, pedido_id))
+    db.execute("UPDATE pedidos SET status = %s WHERE id = %s", (dados.status, pedido_id))
     db.commit()
 
     linha = db.execute(
@@ -184,7 +184,7 @@ async def alterar_status_pedido(
         LEFT JOIN usuarios u ON u.id = p.usuario_id
         LEFT JOIN comandas c ON c.id = p.comanda_id
         LEFT JOIN mesas m ON m.id = c.mesa_id
-        WHERE p.id = ?
+        WHERE p.id = %s
         """,
         (pedido_id,),
     ).fetchone()
@@ -195,19 +195,55 @@ async def alterar_status_pedido(
     return pedido_out
 
 
+# Estados que ainda interessam à cozinha — depois de "pronto" o pedido saiu
+# das mãos de quem prepara (foi entregue, saiu para entrega, ou foi
+# cancelado), então some da tela.
+_STATUS_ATIVOS_NA_COZINHA = ("pendente", "confirmado", "em_preparo", "pronto")
+
+
+@router.get("/cozinha", response_model=list[PedidoAdminOut])
+def listar_pedidos_cozinha(
+    _admin: dict = Depends(get_admin_atual),
+    db: psycopg.Connection = Depends(get_db),
+) -> list[PedidoAdminOut]:
+    """Fila da cozinha: pedidos de mesa, entrega e retirada juntos — quem
+    prepara não separa por canal, separa por "já comecei ou não"."""
+    marcadores = ", ".join(["%s"] * len(_STATUS_ATIVOS_NA_COZINHA))
+    linhas = db.execute(
+        f"""
+        SELECT p.*, u.nome AS usuario_nome, m.numero AS mesa_numero
+        FROM pedidos p
+        LEFT JOIN usuarios u ON u.id = p.usuario_id
+        LEFT JOIN comandas c ON c.id = p.comanda_id
+        LEFT JOIN mesas m ON m.id = c.mesa_id
+        WHERE p.status IN ({marcadores})
+        ORDER BY p.criado_em ASC
+        """,
+        _STATUS_ATIVOS_NA_COZINHA,
+    ).fetchall()
+
+    resultado = []
+    for linha in linhas:
+        base = _linha_para_pedido(db, linha)
+        resultado.append(
+            PedidoAdminOut(**base.model_dump(), usuario_nome=linha["usuario_nome"], mesa_numero=linha["mesa_numero"])
+        )
+    return resultado
+
+
 # ── Mesas e comandas ─────────────────────────────────────────────────────────
 
 
 @router.get("/mesas", response_model=list[MesaAdminOut])
 def listar_mesas_admin(
-    _admin: sqlite3.Row = Depends(get_admin_atual),
-    db: sqlite3.Connection = Depends(get_db),
+    _admin: dict = Depends(get_admin_atual),
+    db: psycopg.Connection = Depends(get_db),
 ) -> list[MesaAdminOut]:
     mesas = db.execute("SELECT * FROM mesas ORDER BY numero").fetchall()
     resultado = []
     for mesa in mesas:
         comanda = db.execute(
-            "SELECT * FROM comandas WHERE mesa_id = ? AND status = 'aberta'", (mesa["id"],)
+            "SELECT * FROM comandas WHERE mesa_id = %s AND status = 'aberta'", (mesa["id"],)
         ).fetchone()
         comanda_out = _montar_comanda_out(db, comanda) if comanda else None
         resultado.append(
@@ -223,10 +259,10 @@ def listar_mesas_admin(
 async def fechar_comanda(
     comanda_id: int,
     dados: FecharComandaIn,
-    admin: sqlite3.Row = Depends(get_admin_atual),
-    db: sqlite3.Connection = Depends(get_db),
+    admin: dict = Depends(get_admin_atual),
+    db: psycopg.Connection = Depends(get_db),
 ) -> dict:
-    comanda = db.execute("SELECT * FROM comandas WHERE id = ? AND status = 'aberta'", (comanda_id,)).fetchone()
+    comanda = db.execute("SELECT * FROM comandas WHERE id = %s AND status = 'aberta'", (comanda_id,)).fetchone()
     if comanda is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comanda não encontrada ou já fechada")
 
@@ -238,17 +274,17 @@ async def fechar_comanda(
     db.execute(
         """
         INSERT INTO pagamentos (comanda_id, metodo, status, valor, pago_em)
-        VALUES (?, ?, 'aprovado', ?, ?)
+        VALUES (%s, %s, 'aprovado', %s, %s)
         """,
         (comanda_id, dados.metodo, comanda_out.total, agora),
     )
     # O trigger trg_comanda_encerrada_libera_mesa cuida de liberar a mesa
     # automaticamente assim que o status vira 'paga'.
-    db.execute("UPDATE comandas SET status = 'paga', fechada_em = ? WHERE id = ?", (agora, comanda_id))
+    db.execute("UPDATE comandas SET status = 'paga', fechada_em = %s WHERE id = %s", (agora, comanda_id))
     db.commit()
 
     mesa = db.execute(
-        "SELECT m.* FROM mesas m JOIN comandas c ON c.mesa_id = m.id WHERE c.id = ?", (comanda_id,)
+        "SELECT m.* FROM mesas m JOIN comandas c ON c.mesa_id = m.id WHERE c.id = %s", (comanda_id,)
     ).fetchone()
 
     await gerenciador_admin.broadcast(
@@ -267,7 +303,7 @@ async def fechar_comanda(
 @router.post("/upload-imagem", response_model=ImagemUploadOut)
 async def upload_imagem(
     file: UploadFile = File(...),
-    _admin: sqlite3.Row = Depends(exigir_papel_admin),
+    _admin: dict = Depends(exigir_papel_admin),
 ) -> ImagemUploadOut:
     extensao = EXTENSOES_IMAGEM_PERMITIDAS.get(file.content_type or "")
     if extensao is None:
@@ -300,8 +336,8 @@ async def upload_imagem(
 
 @router.get("/produtos", response_model=list[ProdutoOut])
 def listar_produtos_admin(
-    _admin: sqlite3.Row = Depends(get_admin_atual),
-    db: sqlite3.Connection = Depends(get_db),
+    _admin: dict = Depends(get_admin_atual),
+    db: psycopg.Connection = Depends(get_db),
 ) -> list[ProdutoOut]:
     linhas = db.execute(
         """
@@ -316,14 +352,15 @@ def listar_produtos_admin(
 @router.post("/produtos", response_model=ProdutoOut, status_code=status.HTTP_201_CREATED)
 def criar_produto(
     dados: ProdutoCreateIn,
-    _admin: sqlite3.Row = Depends(exigir_papel_admin),
-    db: sqlite3.Connection = Depends(get_db),
+    _admin: dict = Depends(exigir_papel_admin),
+    db: psycopg.Connection = Depends(get_db),
 ) -> ProdutoOut:
     try:
-        cursor = db.execute(
+        linha_criada = db.execute(
             """
             INSERT INTO produtos (categoria_id, nome, slug, descricao, preco, calorias, imagem_url, tag, cor_badge, disponivel)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
             """,
             (
                 dados.categoria_id,
@@ -337,14 +374,14 @@ def criar_produto(
                 dados.cor_badge,
                 int(dados.disponivel),
             ),
-        )
+        ).fetchone()
         db.commit()
-    except sqlite3.IntegrityError as erro:
+    except psycopg.IntegrityError as erro:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(erro))
 
     linha = db.execute(
-        "SELECT p.*, c.slug AS categoria_slug FROM produtos p JOIN categorias c ON c.id = p.categoria_id WHERE p.id = ?",
-        (cursor.lastrowid,),
+        "SELECT p.*, c.slug AS categoria_slug FROM produtos p JOIN categorias c ON c.id = p.categoria_id WHERE p.id = %s",
+        (linha_criada["id"],),
     ).fetchone()
     return _linha_para_produto(linha)
 
@@ -353,10 +390,10 @@ def criar_produto(
 def atualizar_produto(
     produto_id: int,
     dados: ProdutoUpdateIn,
-    _admin: sqlite3.Row = Depends(exigir_papel_admin),
-    db: sqlite3.Connection = Depends(get_db),
+    _admin: dict = Depends(exigir_papel_admin),
+    db: psycopg.Connection = Depends(get_db),
 ) -> ProdutoOut:
-    atual = db.execute("SELECT * FROM produtos WHERE id = ?", (produto_id,)).fetchone()
+    atual = db.execute("SELECT * FROM produtos WHERE id = %s", (produto_id,)).fetchone()
     if atual is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado")
 
@@ -377,17 +414,17 @@ def atualizar_produto(
     if campos:
         if "disponivel" in campos:
             campos["disponivel"] = int(campos["disponivel"])
-        atribuicoes = ", ".join(f"{campo} = ?" for campo in campos)
+        atribuicoes = ", ".join(f"{campo} = %s" for campo in campos)
         valores = list(campos.values())
         try:
-            db.execute(f"UPDATE produtos SET {atribuicoes} WHERE id = ?", (*valores, produto_id))
+            db.execute(f"UPDATE produtos SET {atribuicoes} WHERE id = %s", (*valores, produto_id))
             db.commit()
-        except sqlite3.IntegrityError as erro:
+        except psycopg.IntegrityError as erro:
             # Ex.: tentar usar um slug que já existe em outro produto.
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(erro))
 
     linha = db.execute(
-        "SELECT p.*, c.slug AS categoria_slug FROM produtos p JOIN categorias c ON c.id = p.categoria_id WHERE p.id = ?",
+        "SELECT p.*, c.slug AS categoria_slug FROM produtos p JOIN categorias c ON c.id = p.categoria_id WHERE p.id = %s",
         (produto_id,),
     ).fetchone()
     return _linha_para_produto(linha)

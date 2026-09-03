@@ -90,7 +90,21 @@ JWT_ALGORITHM = _env("JWT_ALGORITHM", "HS256")
 JWT_EXPIRA_MINUTOS_CLIENTE = int(_env("JWT_EXPIRA_MINUTOS_CLIENTE", "1440"))
 JWT_EXPIRA_MINUTOS_ADMIN = int(_env("JWT_EXPIRA_MINUTOS_ADMIN", "480"))
 
-DATABASE_PATH = API_DIR / _env("DATABASE_PATH", "database/burger_tech.db")
+# PostgreSQL (Neon) — branch "production" do time. A suíte de testes lê
+# DATABASE_URL_TESTE (branch "test") diretamente em tests/conftest.py, pra
+# nunca sujar dados de desenvolvimento — não é uma preocupação da API em
+# funcionamento normal, só dos testes.
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+if not DATABASE_URL:
+    print(
+        "\n[burger-tech] ERRO: DATABASE_URL não foi definido no .env.\n"
+        "  Copie a connection string do seu projeto no Neon (branch de\n"
+        "  desenvolvimento) para apps/api/.env.\n",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
 SCHEMA_PATH = API_DIR / "database" / "schema.sql"
 
 # Onde ficam as fotos dos produtos enviadas pelo painel admin (servidas como

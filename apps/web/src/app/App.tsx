@@ -11,6 +11,7 @@ import { RegistoPage } from "@/app/pages/RegistoPage";
 import { MesaPage } from "@/app/pages/MesaPage";
 import { AdminLoginPage } from "@/app/pages/admin/AdminLoginPage";
 import { AdminDashboardPage } from "@/app/pages/admin/AdminDashboardPage";
+import { AdminCozinhaPage } from "@/app/pages/admin/AdminCozinhaPage";
 import { ClienteAuthProvider } from "@/app/hooks/useClienteAuth";
 import { AdminAuthProvider } from "@/app/hooks/useAdminAuth";
 
@@ -35,6 +36,8 @@ export default function App() {
 
             {/* Painel administrativo — login e rotas próprias, também sem link público */}
             <Route path="admin/login" element={<AdminLoginPage />} />
+            {/* Tela cheia, sem as abas do painel — pensada pra TV/tablet na cozinha */}
+            <Route path="admin/cozinha" element={<AdminCozinhaPage />} />
             <Route path="admin" element={<AdminLayout />}>
               <Route index element={<AdminDashboardPage />} />
             </Route>

@@ -6,15 +6,17 @@ from fastapi.staticfiles import StaticFiles
 
 from app.auth_admin import autenticar_admin_websocket
 from app.config import CORS_ORIGINS, UPLOADS_DIR
-from app.db import _conectar, inicializar_banco
-from app.routers import admin, auth, cardapio, mesas, pedidos
+from app.db import _conectar, abrir_pool, fechar_pool, inicializar_banco
+from app.routers import admin, auth, cardapio, enderecos, mesas, pedidos, relatorios
 from app.websocket import gerenciador_admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     inicializar_banco()
+    abrir_pool()
     yield
+    fechar_pool()
 
 
 app = FastAPI(title="Burger Tech API", lifespan=lifespan)
@@ -34,8 +36,10 @@ app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 app.include_router(cardapio.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(pedidos.router, prefix="/api")
+app.include_router(enderecos.router, prefix="/api")
 app.include_router(mesas.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+app.include_router(relatorios.router, prefix="/api")
 
 
 @app.get("/api/saude")

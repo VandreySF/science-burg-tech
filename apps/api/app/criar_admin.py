@@ -9,11 +9,10 @@ segurança real (ver database/README.md).
 """
 
 import getpass
-import sqlite3
 import sys
 
 from app.auth_cliente import hash_senha
-from app.db import inicializar_banco, get_db
+from app.db import _conectar, inicializar_banco
 
 
 def main() -> None:
@@ -38,15 +37,15 @@ def main() -> None:
         print("Papel inválido — use 'admin' ou 'atendente'.")
         sys.exit(1)
 
-    db: sqlite3.Connection = next(get_db())
+    db = _conectar()
     try:
-        existente = db.execute("SELECT id FROM administradores WHERE email = ?", (email,)).fetchone()
+        existente = db.execute("SELECT id FROM administradores WHERE email = %s", (email,)).fetchone()
         if existente is not None:
             print(f"Já existe um administrador com o e-mail {email}.")
             sys.exit(1)
 
         db.execute(
-            "INSERT INTO administradores (nome, email, senha_hash, papel) VALUES (?, ?, ?, ?)",
+            "INSERT INTO administradores (nome, email, senha_hash, papel) VALUES (%s, %s, %s, %s)",
             (nome, email, hash_senha(senha), papel),
         )
         db.commit()

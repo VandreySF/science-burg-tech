@@ -85,6 +85,7 @@ export type PedidoCreateIn = {
   tipo: "entrega" | "retirada";
   itens: { produto_id: number; quantidade: number }[];
   endereco?: EnderecoIn;
+  endereco_id?: number;
   metodo_pagamento?: string;
   observacoes?: string;
 };
@@ -93,6 +94,22 @@ export const criarPedido = (token: string, dados: PedidoCreateIn) =>
   apiFetch<PedidoApi>("/pedidos", { method: "POST", body: JSON.stringify(dados), headers: authHeader(token) });
 
 export const meusPedidos = (token: string) => apiFetch<PedidoApi[]>("/pedidos/me", { headers: authHeader(token) });
+
+// ── Endereços salvos ─────────────────────────────────────────────────────────
+
+export type EnderecoApi = EnderecoIn & { id: number; padrao: boolean };
+
+export const getMeusEnderecos = (token: string) => apiFetch<EnderecoApi[]>("/enderecos", { headers: authHeader(token) });
+
+export async function buscarEnderecoPorCep(cep: string): Promise<Pick<EnderecoIn, "rua" | "bairro" | "cidade" | "estado"> | null> {
+  const cepLimpo = cep.replace(/\D/g, "");
+  if (cepLimpo.length !== 8) return null;
+  const resposta = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
+  if (!resposta.ok) return null;
+  const dados = await resposta.json();
+  if (dados.erro) return null;
+  return { rua: dados.logradouro, bairro: dados.bairro, cidade: dados.localidade, estado: dados.uf };
+}
 
 // ── Mesas ────────────────────────────────────────────────────────────────────
 
@@ -124,6 +141,8 @@ export const adminAlterarStatusPedido = (token: string, pedidoId: number, status
     body: JSON.stringify({ status }),
     headers: authHeader(token),
   });
+
+export const adminListarCozinha = (token: string) => apiFetch<PedidoAdminApi[]>("/admin/cozinha", { headers: authHeader(token) });
 
 export type MesaAdminApi = MesaComandaApi;
 
@@ -158,6 +177,21 @@ export const adminUploadImagem = async (token: string, arquivo: File) => {
   formData.append("file", arquivo);
   return apiFetch<{ url: string }>("/admin/upload-imagem", { method: "POST", body: formData, headers: authHeader(token) });
 };
+
+export type RelatorioApi = {
+  periodo_dias: number;
+  faturamento_total: number;
+  total_pedidos: number;
+  ticket_medio: number;
+  faturamento_por_dia: { data: string; total: number }[];
+  faturamento_por_tipo: { tipo: string; total: number }[];
+  produtos_mais_vendidos: { nome_produto: string; quantidade: number; total: number }[];
+  pagamentos_por_metodo: { metodo: string; total: number }[];
+  pedidos_por_hora: { hora: number; quantidade: number }[];
+};
+
+export const adminRelatorios = (token: string, dias: number) =>
+  apiFetch<RelatorioApi>(`/admin/relatorios?dias=${dias}`, { headers: authHeader(token) });
 
 export function wsAdminUrl(token: string): string {
   const protocolo = window.location.protocol === "https:" ? "wss" : "ws";

@@ -138,14 +138,16 @@ API **os troca por valores aleatórios** na primeira vez que cria o banco
 (`_rotacionar_qr_tokens_do_seed`). Sem isso, alguém poderia adivinhar o link
 de uma mesa que não é a sua e lançar pedidos na comanda alheia.
 
-O arquivo `.db` está no `.gitignore` — versionar o banco significaria
-versionar também esses tokens, além dos hashes de senha e dos dados dos
+O banco (PostgreSQL, hospedado no Neon) nunca é versionado — a connection
+string em `apps/api/.env` (que contém a senha de acesso) está no
+`.gitignore`, e versionar o schema não expõe dados: `schema.sql` só cria a
+estrutura e o seed de cardápio/mesas, sem hashes de senha nem dados de
 clientes.
 
 ## 9. Banco de dados
 
-- Todas as consultas usam **parâmetros** (`?`), nunca concatenação de
-  string. Não há caminho para SQL injection.
+- Todas as consultas usam **parâmetros** (`%s`, o placeholder do psycopg),
+  nunca concatenação de string. Não há caminho para SQL injection.
 - No único ponto em que o SQL é montado dinamicamente (o `PATCH` de
   produto), os nomes de coluna passam por uma **lista branca**
   (`COLUNAS_PRODUTO_EDITAVEIS`) antes de entrar na string SQL — os valores
@@ -154,9 +156,10 @@ clientes.
   JSON antes desse código rodar), é defesa em profundidade: garante que um
   campo novo adicionado ao schema com nome diferente da coluna real falhe
   alto, em vez de gerar SQL quebrado silenciosamente em produção.
-- `PRAGMA foreign_keys = ON` é aplicado em toda conexão. O SQLite ignora
-  chaves estrangeiras por padrão; sem isso o banco aceitaria um pedido
-  apontando para um produto inexistente.
+- Chaves estrangeiras são sempre aplicadas pelo PostgreSQL — diferente do
+  SQLite (usado antes da migração), não existe um interruptor pra
+  desligá-las; um pedido apontando para um produto inexistente é rejeitado
+  pelo próprio banco.
 - Regras de negócio críticas (liberar a mesa quando a comanda é paga, manter
   `atualizado_em`) ficam em **triggers**, dentro do banco, e não dependem de
   o backend lembrar de executá-las.

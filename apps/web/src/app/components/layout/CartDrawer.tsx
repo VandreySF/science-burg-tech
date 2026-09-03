@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { Check, Minus, Plus, ShoppingCart, X } from "lucide-react";
+import { Check, MapPin, Minus, Plus, ShoppingCart, X } from "lucide-react";
 import { Link } from "react-router";
 import { useClienteAuth } from "@/app/hooks/useClienteAuth";
-import { ApiError, criarPedido } from "@/app/lib/api";
+import { ApiError, buscarEnderecoPorCep, criarPedido, getMeusEnderecos, type EnderecoApi } from "@/app/lib/api";
 import type { Pedido } from "@/app/types";
 
 type Etapa = "carrinho" | "checkout" | "sucesso";
+
+const CAMPO_ENDERECO_VAZIO = { rua: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "", cep: "" };
 
 export function CartDrawer({
   open,
@@ -28,10 +30,26 @@ export function CartDrawer({
   const { usuario, token } = useClienteAuth();
   const [etapa, setEtapa] = useState<Etapa>("carrinho");
   const [tipo, setTipo] = useState<"retirada" | "entrega">("retirada");
-  const [endereco, setEndereco] = useState({ rua: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "", cep: "" });
+  const [endereco, setEndereco] = useState(CAMPO_ENDERECO_VAZIO);
   const [metodoPagamento, setMetodoPagamento] = useState("pix");
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+
+  const [enderecosSalvos, setEnderecosSalvos] = useState<EnderecoApi[] | null>(null);
+  const [enderecoSelecionadoId, setEnderecoSelecionadoId] = useState<number | "novo" | null>(null);
+  const [buscandoCep, setBuscandoCep] = useState(false);
+
+  // Busca os endereços salvos assim que o cliente escolhe "Entrega" —
+  // evita re-digitar tudo se ele já pediu daqui antes.
+  useEffect(() => {
+    if (tipo !== "entrega" || !token || enderecosSalvos !== null) return;
+    getMeusEnderecos(token)
+      .then((lista) => {
+        setEnderecosSalvos(lista);
+        setEnderecoSelecionadoId(lista.length > 0 ? lista[0].id : "novo");
+      })
+      .catch(() => setEnderecosSalvos([]));
+  }, [tipo, token, enderecosSalvos]);
 
   if (!open) return null;
 
@@ -42,7 +60,22 @@ export function CartDrawer({
     setTimeout(() => {
       setEtapa("carrinho");
       setErro(null);
+      setEndereco(CAMPO_ENDERECO_VAZIO);
+      setEnderecosSalvos(null);
+      setEnderecoSelecionadoId(null);
     }, 250);
+  };
+
+  const buscarCep = async (cep: string) => {
+    setEndereco((p) => ({ ...p, cep }));
+    if (cep.replace(/\D/g, "").length !== 8) return;
+    setBuscandoCep(true);
+    try {
+      const encontrado = await buscarEnderecoPorCep(cep);
+      if (encontrado) setEndereco((p) => ({ ...p, ...encontrado, cep }));
+    } finally {
+      setBuscandoCep(false);
+    }
   };
 
   const confirmarPedido = async () => {
@@ -53,7 +86,8 @@ export function CartDrawer({
       await criarPedido(token, {
         tipo,
         itens: cart.map((i) => ({ produto_id: i.id, quantidade: i.qty })),
-        endereco: tipo === "entrega" ? endereco : undefined,
+        endereco: tipo === "entrega" && enderecoSelecionadoId === "novo" ? endereco : undefined,
+        endereco_id: tipo === "entrega" && typeof enderecoSelecionadoId === "number" ? enderecoSelecionadoId : undefined,
         metodo_pagamento: metodoPagamento,
       });
       onClearCart();
@@ -65,8 +99,12 @@ export function CartDrawer({
     }
   };
 
+  const usandoEnderecoNovo = enderecoSelecionadoId === "novo";
   const enderecoValido =
-    tipo === "retirada" || (endereco.rua && endereco.numero && endereco.bairro && endereco.cidade && endereco.estado && endereco.cep);
+    tipo === "retirada" ||
+    (usandoEnderecoNovo
+      ? !!(endereco.rua && endereco.numero && endereco.bairro && endereco.cidade && endereco.estado && endereco.cep)
+      : typeof enderecoSelecionadoId === "number");
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -129,25 +167,80 @@ export function CartDrawer({
 
             {tipo === "entrega" && (
               <div className="space-y-2.5">
-                {(
-                  [
-                    ["rua", "Rua"],
-                    ["numero", "Número"],
-                    ["complemento", "Complemento (opcional)"],
-                    ["bairro", "Bairro"],
-                    ["cidade", "Cidade"],
-                    ["estado", "Estado (UF)"],
-                    ["cep", "CEP"],
-                  ] as const
-                ).map(([campo, label]) => (
-                  <input
-                    key={campo}
-                    value={endereco[campo]}
-                    onChange={(e) => setEndereco((p) => ({ ...p, [campo]: e.target.value }))}
-                    placeholder={label}
-                    className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
-                  />
-                ))}
+                {enderecosSalvos === null ? (
+                  <p className="text-xs text-muted-foreground text-center py-2">Carregando endereços…</p>
+                ) : (
+                  <>
+                    {enderecosSalvos.length > 0 && (
+                      <div className="space-y-2">
+                        {enderecosSalvos.map((e) => (
+                          <button
+                            key={e.id}
+                            onClick={() => setEnderecoSelecionadoId(e.id)}
+                            className={`w-full text-left px-3.5 py-3 rounded-xl border transition-colors flex items-start gap-2.5 ${
+                              enderecoSelecionadoId === e.id ? "bg-primary/10 border-primary" : "bg-secondary border-border"
+                            }`}
+                          >
+                            <MapPin size={15} className={`mt-0.5 flex-shrink-0 ${enderecoSelecionadoId === e.id ? "text-primary" : "text-muted-foreground"}`} />
+                            <span className="text-xs text-foreground leading-relaxed">
+                              {e.rua}, {e.numero}
+                              {e.complemento ? ` — ${e.complemento}` : ""}
+                              <br />
+                              <span className="text-muted-foreground">
+                                {e.bairro}, {e.cidade}/{e.estado} · {e.cep}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setEnderecoSelecionadoId("novo")}
+                          className={`w-full text-center py-2.5 rounded-xl text-xs font-bold border transition-colors ${
+                            usandoEnderecoNovo ? "bg-primary/10 border-primary text-primary" : "border-border text-muted-foreground"
+                          }`}
+                        >
+                          + Usar outro endereço
+                        </button>
+                      </div>
+                    )}
+
+                    {usandoEnderecoNovo && (
+                      <div className="space-y-2.5">
+                        <div className="relative">
+                          <input
+                            value={endereco.cep}
+                            onChange={(e) => buscarCep(e.target.value)}
+                            placeholder="CEP"
+                            className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+                          />
+                          {buscandoCep && (
+                            <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">buscando…</span>
+                          )}
+                        </div>
+                        {(
+                          [
+                            ["rua", "Rua"],
+                            ["numero", "Número"],
+                            ["complemento", "Complemento (opcional)"],
+                            ["bairro", "Bairro"],
+                            ["cidade", "Cidade"],
+                            ["estado", "Estado (UF)"],
+                          ] as const
+                        ).map(([campo, label]) => (
+                          <input
+                            key={campo}
+                            value={endereco[campo]}
+                            onChange={(e) => setEndereco((p) => ({ ...p, [campo]: e.target.value }))}
+                            placeholder={label}
+                            className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+                          />
+                        ))}
+                        <p className="text-[10px] text-muted-foreground font-mono" style={{ fontFamily: "'JetBrains Mono',monospace" }}>
+                          // preenche rua/bairro/cidade sozinho a partir do CEP
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
 

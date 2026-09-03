@@ -13,7 +13,7 @@ def test_abrir_mesa_pelo_qr_cria_comanda(client, db):
     assert corpo["comanda"]["status"] == "aberta"
     assert corpo["comanda"]["itens"] == []
 
-    mesa_atualizada = db.execute("SELECT status FROM mesas WHERE id = ?", (mesa["id"],)).fetchone()
+    mesa_atualizada = db.execute("SELECT status FROM mesas WHERE id = %s", (mesa["id"],)).fetchone()
     assert mesa_atualizada["status"] == "ocupada"
 
 
@@ -55,14 +55,14 @@ def test_pedido_na_mesa_e_fechamento_de_comanda_pelo_admin(client, db, admin_ati
     assert resposta.status_code == 200
 
     mesa_status = db.execute(
-        "SELECT m.status FROM mesas m JOIN comandas c ON c.mesa_id = m.id WHERE c.id = ?", (comanda_id,)
+        "SELECT m.status FROM mesas m JOIN comandas c ON c.mesa_id = m.id WHERE c.id = %s", (comanda_id,)
     ).fetchone()
     assert mesa_status["status"] == "livre"
 
-    comanda_status = db.execute("SELECT status FROM comandas WHERE id = ?", (comanda_id,)).fetchone()
+    comanda_status = db.execute("SELECT status FROM comandas WHERE id = %s", (comanda_id,)).fetchone()
     assert comanda_status["status"] == "paga"
 
-    pagamento = db.execute("SELECT * FROM pagamentos WHERE comanda_id = ?", (comanda_id,)).fetchone()
+    pagamento = db.execute("SELECT * FROM pagamentos WHERE comanda_id = %s", (comanda_id,)).fetchone()
     assert pagamento["metodo"] == "pix"
     assert pagamento["status"] == "aprovado"
 

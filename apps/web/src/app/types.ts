@@ -19,6 +19,7 @@ export type CartContext = {
   addCart: (item: Item) => void;
   changeQty: (id: number, d: number) => void;
   clearCart: () => void;
+  adicionarVarios: (itens: Pedido[]) => void;
   totalQty: number;
   totalPrc: number;
 };
