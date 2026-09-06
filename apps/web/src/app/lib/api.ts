@@ -87,13 +87,16 @@ export const loginCliente = (dados: { email: string; senha: string }) =>
 
 // ── Pedidos (entrega/retirada) ──────────────────────────────────────────────
 
+export type ItemPedidoCreateIn = { produto_id: number; quantidade: number } | { combo_id: number; quantidade: number };
+
 export type PedidoCreateIn = {
   tipo: "entrega" | "retirada";
-  itens: { produto_id: number; quantidade: number }[];
+  itens: ItemPedidoCreateIn[];
   endereco?: EnderecoIn;
   endereco_id?: number;
   metodo_pagamento?: string;
   observacoes?: string;
+  codigo_cupom?: string;
 };
 
 export const criarPedido = (token: string, dados: PedidoCreateIn) =>
@@ -203,6 +206,122 @@ export function wsAdminUrl(token: string): string {
   const protocolo = window.location.protocol === "https:" ? "wss" : "ws";
   return `${protocolo}://${window.location.host}/ws/admin?token=${encodeURIComponent(token)}`;
 }
+
+// ── Cupons ───────────────────────────────────────────────────────────────────
+
+export type CupomApi = {
+  id: number;
+  codigo: string;
+  tipo_desconto: "percentual" | "fixo";
+  valor: number;
+  valor_minimo_pedido: number;
+  limite_uso_total: number | null;
+  limite_uso_por_usuario: number | null;
+  valido_de: string | null;
+  valido_ate: string | null;
+  ativo: boolean;
+};
+
+export type CupomCampos = Pick<
+  CupomApi,
+  "codigo" | "tipo_desconto" | "valor" | "valor_minimo_pedido" | "limite_uso_total" | "limite_uso_por_usuario" | "valido_de" | "valido_ate" | "ativo"
+>;
+
+export type CupomValidarResposta = { valido: boolean; motivo: string | null; codigo: string | null; desconto: number };
+
+export const validarCupom = (token: string, dados: { codigo: string; subtotal: number }) =>
+  apiFetch<CupomValidarResposta>("/cupons/validar", { method: "POST", body: JSON.stringify(dados), headers: authHeader(token) });
+
+export const adminListarCupons = (token: string) => apiFetch<CupomApi[]>("/admin/cupons", { headers: authHeader(token) });
+
+export const adminCriarCupom = (token: string, dados: Partial<CupomCampos> & Pick<CupomCampos, "codigo" | "tipo_desconto" | "valor">) =>
+  apiFetch<CupomApi>("/admin/cupons", { method: "POST", body: JSON.stringify(dados), headers: authHeader(token) });
+
+export const adminAtualizarCupom = (token: string, cupomId: number, dados: Partial<Omit<CupomCampos, "codigo">>) =>
+  apiFetch<CupomApi>(`/admin/cupons/${cupomId}`, { method: "PATCH", body: JSON.stringify(dados), headers: authHeader(token) });
+
+// ── Promoções ────────────────────────────────────────────────────────────────
+
+export type PromocaoApi = {
+  id: number;
+  titulo: string;
+  subtitulo: string | null;
+  imagem_url: string;
+  cupom_codigo: string | null;
+  ordem: number;
+  ativo: boolean;
+  valido_de: string | null;
+  valido_ate: string | null;
+};
+
+export type PromocaoAdminApi = Omit<PromocaoApi, "cupom_codigo"> & { cupom_id: number | null };
+
+export type PromocaoCampos = Pick<PromocaoAdminApi, "titulo" | "subtitulo" | "imagem_url" | "cupom_id" | "ordem" | "ativo" | "valido_de" | "valido_ate">;
+
+export const getPromocoes = () => apiFetch<PromocaoApi[]>("/promocoes");
+
+export const adminListarPromocoes = (token: string) => apiFetch<PromocaoAdminApi[]>("/admin/promocoes", { headers: authHeader(token) });
+
+export const adminCriarPromocao = (token: string, dados: Partial<PromocaoCampos> & Pick<PromocaoCampos, "titulo" | "imagem_url">) =>
+  apiFetch<PromocaoAdminApi>("/admin/promocoes", { method: "POST", body: JSON.stringify(dados), headers: authHeader(token) });
+
+export const adminAtualizarPromocao = (token: string, promocaoId: number, dados: Partial<PromocaoCampos>) =>
+  apiFetch<PromocaoAdminApi>(`/admin/promocoes/${promocaoId}`, { method: "PATCH", body: JSON.stringify(dados), headers: authHeader(token) });
+
+// ── Combos ───────────────────────────────────────────────────────────────────
+
+export type ComboItemApi = { produto_id: number; nome: string; quantidade: number };
+
+export type ComboApi = {
+  id: number;
+  nome: string;
+  slug: string;
+  descricao: string | null;
+  preco: number;
+  imagem_url: string | null;
+  disponivel: boolean;
+  itens: ComboItemApi[];
+};
+
+export type ComboCampos = {
+  nome: string;
+  slug: string;
+  descricao?: string | null;
+  preco: number;
+  imagem_url?: string | null;
+  disponivel: boolean;
+  itens: { produto_id: number; quantidade: number }[];
+};
+
+export const getCombos = () => apiFetch<ComboApi[]>("/combos");
+
+export const adminListarCombos = (token: string) => apiFetch<ComboApi[]>("/admin/combos", { headers: authHeader(token) });
+
+export const adminCriarCombo = (token: string, dados: ComboCampos) =>
+  apiFetch<ComboApi>("/admin/combos", { method: "POST", body: JSON.stringify(dados), headers: authHeader(token) });
+
+export const adminAtualizarCombo = (token: string, comboId: number, dados: Partial<ComboCampos>) =>
+  apiFetch<ComboApi>(`/admin/combos/${comboId}`, { method: "PATCH", body: JSON.stringify(dados), headers: authHeader(token) });
+
+// ── Avaliações ───────────────────────────────────────────────────────────────
+
+export type AvaliacaoApi = { id: number; usuario_nome: string; nota: number; comentario: string | null; criado_em: string };
+
+export type AvaliacaoAdminApi = AvaliacaoApi & { pedido_id: number; aprovado: boolean };
+
+export const getAvaliacoes = () => apiFetch<AvaliacaoApi[]>("/avaliacoes");
+
+export const criarAvaliacao = (token: string, dados: { pedido_id: number; nota: number; comentario?: string }) =>
+  apiFetch<AvaliacaoApi>("/avaliacoes", { method: "POST", body: JSON.stringify(dados), headers: authHeader(token) });
+
+export const adminListarAvaliacoes = (token: string) => apiFetch<AvaliacaoAdminApi[]>("/admin/avaliacoes", { headers: authHeader(token) });
+
+export const adminModerarAvaliacao = (token: string, avaliacaoId: number, aprovado: boolean) =>
+  apiFetch<AvaliacaoAdminApi>(`/admin/avaliacoes/${avaliacaoId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ aprovado }),
+    headers: authHeader(token),
+  });
 
 // ── Mesas Virtuais ("Network da Fome") ───────────────────────────────────
 

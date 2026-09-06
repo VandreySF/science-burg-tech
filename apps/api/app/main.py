@@ -7,7 +7,20 @@ from fastapi.staticfiles import StaticFiles
 from app.auth_admin import autenticar_admin_websocket
 from app.config import CORS_ORIGINS, UPLOADS_DIR
 from app.db import _conectar, abrir_pool, fechar_pool, inicializar_banco
-from app.routers import admin, auth, cardapio, enderecos, mesas, mesas_virtuais, pedidos, relatorios
+from app.routers import (
+    admin,
+    auth,
+    avaliacoes,
+    cardapio,
+    combos,
+    cupons,
+    enderecos,
+    mesas,
+    mesas_virtuais,
+    pedidos,
+    promocoes,
+    relatorios,
+)
 from app.websocket import gerenciador_admin
 
 
@@ -40,6 +53,10 @@ app.include_router(enderecos.router, prefix="/api")
 app.include_router(mesas.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(relatorios.router, prefix="/api")
+app.include_router(cupons.router, prefix="/api")
+app.include_router(promocoes.router, prefix="/api")
+app.include_router(combos.router, prefix="/api")
+app.include_router(avaliacoes.router, prefix="/api")
 app.include_router(mesas_virtuais.router, prefix="/api")
 app.include_router(mesas_virtuais.admin_router, prefix="/api")
 

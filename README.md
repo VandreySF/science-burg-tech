@@ -39,10 +39,9 @@ próximo passo.
 cd apps/api
 python -m venv .venv
 .venv\Scripts\activate          # Windows (no Linux/Mac: source .venv/bin/activate)
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass # Se aparecer o erro “a execução de scripts foi desabilitada”
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass # Se aparecer o erro "a execução de scripts foi desabilitada"
 pip install -r requirements.txt
 copy .env.example .env          # Windows (no Linux/Mac: cp .env.example .env)
-python -m app.migrar_mesas_virtuais
 ```
 
 Edite o `.env` recém-criado e cole as duas connection strings do Neon em

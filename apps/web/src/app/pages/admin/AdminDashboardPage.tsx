@@ -3,8 +3,12 @@ import { CheckCircle2, Users, Wifi, WifiOff, X } from "lucide-react";
 import { useAdminAuth } from "@/app/hooks/useAdminAuth";
 import { useAdminWebSocket } from "@/app/hooks/useAdminWebSocket";
 import { adminAlterarStatusPedido, adminFecharComanda, adminListarMesas, adminListarPedidos } from "@/app/lib/api";
+import { AdminAvaliacoesPanel } from "@/app/pages/admin/AdminAvaliacoesPanel";
 import { AdminCardapioPanel } from "@/app/pages/admin/AdminCardapioPanel";
+import { AdminCombosPanel } from "@/app/pages/admin/AdminCombosPanel";
+import { AdminCuponsPanel } from "@/app/pages/admin/AdminCuponsPanel";
 import { AdminMesasVirtuaisPanel } from "@/app/pages/admin/AdminMesasVirtuaisPanel";
+import { AdminPromocoesPanel } from "@/app/pages/admin/AdminPromocoesPanel";
 import { AdminRelatoriosPanel } from "@/app/pages/admin/AdminRelatoriosPanel";
 // MesaAdminApi é definido em lib/api.ts (é um alias de MesaComandaApi), não em
 // types.ts — importar do lugar errado quebrava a checagem de tipos.
@@ -39,7 +43,9 @@ export function AdminDashboardPage() {
   const [metodoFechamento, setMetodoFechamento] = useState("pix");
   const [fechando, setFechando] = useState(false);
   const [conectado, setConectado] = useState(false);
-  const [aba, setAba] = useState<"operacao" | "cardapio" | "relatorios" | "mesas_virtuais">("operacao");
+  const [aba, setAba] = useState<
+    "operacao" | "cardapio" | "combos" | "cupons" | "promocoes" | "avaliacoes" | "mesas_virtuais" | "relatorios"
+  >("operacao");
 
   const recarregar = useCallback(() => {
     if (!token) return;
@@ -89,6 +95,10 @@ export function AdminDashboardPage() {
             [
               ["operacao", "Mesas & Pedidos"],
               ["cardapio", "Cardápio"],
+              ["combos", "Combos"],
+              ["cupons", "Cupons"],
+              ["promocoes", "Promoções"],
+              ["avaliacoes", "Avaliações"],
               ["mesas_virtuais", "🍔 Network da Fome"],
               ["relatorios", "Relatórios"],
             ] as const
@@ -114,6 +124,14 @@ export function AdminDashboardPage() {
       </div>
 
       {aba === "cardapio" && <AdminCardapioPanel />}
+
+      {aba === "combos" && <AdminCombosPanel />}
+
+      {aba === "cupons" && <AdminCuponsPanel />}
+
+      {aba === "promocoes" && <AdminPromocoesPanel />}
+
+      {aba === "avaliacoes" && <AdminAvaliacoesPanel />}
 
       {aba === "mesas_virtuais" && <AdminMesasVirtuaisPanel />}
 

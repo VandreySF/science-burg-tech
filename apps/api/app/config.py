@@ -106,6 +106,7 @@ if not DATABASE_URL:
     raise SystemExit(1)
 
 SCHEMA_PATH = API_DIR / "database" / "schema.sql"
+MIGRATIONS_DIR = API_DIR / "database" / "migrations"
 
 # Onde ficam as fotos dos produtos enviadas pelo painel admin (servidas como
 # arquivo estático em /uploads — veja main.py)

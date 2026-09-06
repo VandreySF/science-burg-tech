@@ -1,3 +1,4 @@
+import { MotionConfig } from "motion/react";
 import { BrowserRouter, Route, Routes } from "react-router";
 import { RootLayout } from "@/app/layout/RootLayout";
 import { AdminLayout } from "@/app/layout/AdminLayout";
@@ -19,35 +20,37 @@ import { AdminAuthProvider } from "@/app/hooks/useAdminAuth";
 
 export default function App() {
   return (
-    <ClienteAuthProvider>
-      <AdminAuthProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route element={<RootLayout />}>
-              <Route index element={<HomePage />} />
-              <Route path="cardapio" element={<CardapioPage />} />
-              <Route path="sobre" element={<SobrePage />} />
-              <Route path="localizacao" element={<LocalizacaoPage />} />
-              <Route path="pedidos" element={<MeusPedidosPage />} />
-              <Route path="network-da-fome" element={<NetworkDaFomePage />} />
-              <Route path="mesa-virtual/:mesaId" element={<MesaVirtualPage />} />
-              <Route path="login" element={<LoginPage />} />
-              <Route path="registo" element={<RegistoPage />} />
-            </Route>
+    <MotionConfig reducedMotion="user">
+      <ClienteAuthProvider>
+        <AdminAuthProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route element={<RootLayout />}>
+                <Route index element={<HomePage />} />
+                <Route path="cardapio" element={<CardapioPage />} />
+                <Route path="sobre" element={<SobrePage />} />
+                <Route path="localizacao" element={<LocalizacaoPage />} />
+                <Route path="pedidos" element={<MeusPedidosPage />} />
+                <Route path="network-da-fome" element={<NetworkDaFomePage />} />
+                <Route path="mesa-virtual/:mesaId" element={<MesaVirtualPage />} />
+                <Route path="login" element={<LoginPage />} />
+                <Route path="registo" element={<RegistoPage />} />
+              </Route>
 
-            {/* Rota "escondida" do QR code da mesa — sem link em nenhum menu público */}
-            <Route path="m/:qrToken" element={<MesaPage />} />
+              {/* Rota "escondida" do QR code da mesa — sem link em nenhum menu público */}
+              <Route path="m/:qrToken" element={<MesaPage />} />
 
-            {/* Painel administrativo — login e rotas próprias, também sem link público */}
-            <Route path="admin/login" element={<AdminLoginPage />} />
-            {/* Tela cheia, sem as abas do painel — pensada pra TV/tablet na cozinha */}
-            <Route path="admin/cozinha" element={<AdminCozinhaPage />} />
-            <Route path="admin" element={<AdminLayout />}>
-              <Route index element={<AdminDashboardPage />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </AdminAuthProvider>
-    </ClienteAuthProvider>
+              {/* Painel administrativo — login e rotas próprias, também sem link público */}
+              <Route path="admin/login" element={<AdminLoginPage />} />
+              {/* Tela cheia, sem as abas do painel — pensada pra TV/tablet na cozinha */}
+              <Route path="admin/cozinha" element={<AdminCozinhaPage />} />
+              <Route path="admin" element={<AdminLayout />}>
+                <Route index element={<AdminDashboardPage />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </AdminAuthProvider>
+      </ClienteAuthProvider>
+    </MotionConfig>
   );
 }

@@ -10,14 +10,28 @@ export type Item = {
   badge?: string;
 };
 
-export type Pedido = { id: number; nome: string; preco: number; qty: number };
+export type Pedido = { id: number; tipo: "produto" | "combo"; nome: string; preco: number; qty: number };
 
 export type Cat = "hamburguer" | "acompanhamento" | "bebida" | "sobremesa";
+
+export type ComboItemResumo = { produtoId: number; nome: string; quantidade: number };
+
+export type Combo = {
+  id: number;
+  nome: string;
+  slug: string;
+  descricao: string | null;
+  preco: number;
+  img: string;
+  disponivel: boolean;
+  itens: ComboItemResumo[];
+};
 
 export type CartContext = {
   cart: Pedido[];
   addCart: (item: Item) => void;
-  changeQty: (id: number, d: number) => void;
+  addComboCart: (combo: Combo) => void;
+  changeQty: (id: number, tipo: "produto" | "combo", d: number) => void;
   clearCart: () => void;
   adicionarVarios: (itens: Pedido[]) => void;
   totalQty: number;
@@ -43,6 +57,7 @@ export type Administrador = {
 export type ItemPedidoApi = {
   id: number;
   produto_id: number | null;
+  combo_id: number | null;
   nome_produto: string;
   preco_unitario: number;
   quantidade: number;
@@ -65,10 +80,13 @@ export type PedidoApi = {
   metodo_pagamento: string | null;
   subtotal: number;
   taxa_entrega: number;
+  desconto: number;
+  cupom_codigo: string | null;
   total: number;
   observacoes: string | null;
   criado_em: string;
   itens: ItemPedidoApi[];
+  avaliacao_id: number | null;
 };
 
 export type PedidoAdminApi = PedidoApi & {
