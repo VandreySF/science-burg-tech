@@ -1,0 +1,830 @@
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/.env.example b/apps/api/.env.example
+--- a/apps/api/.env.example	2026-09-08 21:30:03.808252862 +0000
++++ b/apps/api/.env.example	2026-09-08 21:30:03.842803883 +0000
+@@ -29,3 +29,13 @@
+ 
+ # Origens permitidas para CORS, separadas por vírgula (o dev server do Vite roda em 5173)
+ CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
++
++# ── G.P.T. (Grill Potato Toast) — atendente virtual ─────────────────────────
++# Deixe IA_CHAVE em branco para desligar o atendente: o site funciona igual,
++# apenas sem o botão de conversa.
++#
++# Provedores aceitos: gemini | openai | anthropic
++IA_PROVEDOR=gemini
++IA_CHAVE=
++IA_MODELO=gemini-2.0-flash
++IA_TIMEOUT_SEGUNDOS=20
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/app/config.py b/apps/api/app/config.py
+--- a/apps/api/app/config.py	2026-09-08 21:30:03.809036628 +0000
++++ b/apps/api/app/config.py	2026-09-08 21:30:03.843713006 +0000
+@@ -128,3 +128,16 @@
+         file=sys.stderr,
+     )
+     raise SystemExit(1)
++
++
++# ── G.P.T. (Grill Potato Toast) — atendente virtual ─────────────────────────
++# A chave fica só aqui, no servidor. Se estivesse no front-end, qualquer
++# visitante a leria no DevTools e a usaria por conta própria — e a fatura
++# viria para o projeto.
++#
++# Sem IA_CHAVE definida, o atendente simplesmente não aparece no site. O
++# resto do sistema funciona igual: ele é um extra, não um pilar.
++IA_PROVEDOR = _env("IA_PROVEDOR", "gemini").strip().lower()
++IA_CHAVE = os.getenv("IA_CHAVE", "").strip()
++IA_MODELO = _env("IA_MODELO", "gemini-2.0-flash")
++IA_TIMEOUT_SEGUNDOS = int(_env("IA_TIMEOUT_SEGUNDOS", "20"))
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/app/ia.py b/apps/api/app/ia.py
+--- a/apps/api/app/ia.py	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/api/app/ia.py	2026-09-08 21:30:03.846973994 +0000
+@@ -0,0 +1,172 @@
++"""Integração com o provedor de IA que dá voz ao G.P.T.
++
++G.P.T. = Grill Potato Toast, o atendente virtual da Science Burg Tech.
++
++Por que este módulo existe separado do router:
++  - a chamada externa fica isolada, então trocar de provedor (Gemini,
++    OpenAI, Anthropic) não mexe em mais nada do sistema;
++  - a chave da API nunca chega ao navegador. O front conversa só com a
++    nossa API, e é ela quem fala com o provedor. Se a chave estivesse no
++    front-end, qualquer pessoa abriria o DevTools e a usaria por conta.
++"""
++
++from __future__ import annotations
++
++import json
++import urllib.error
++import urllib.request
++
++from app.config import IA_CHAVE, IA_MODELO, IA_PROVEDOR, IA_TIMEOUT_SEGUNDOS
++
++
++class IAIndisponivel(Exception):
++    """O provedor não respondeu, recusou a chave ou não está configurado.
++
++    O router trata isso devolvendo uma mensagem amigável em vez de um erro
++    500: um atendente fora do ar não pode derrubar o site inteiro.
++    """
++
++
++def ia_configurada() -> bool:
++    return bool(IA_CHAVE)
++
++
++# ── Prompt de sistema ────────────────────────────────────────────────────────
++# As regras abaixo existem para conter os dois riscos reais de usar um modelo
++# de linguagem num site de vendas: inventar produto que não existe e inventar
++# preço. Por isso o cardápio real é injetado a cada conversa e o modelo é
++# proibido de sair dele.
++INSTRUCOES = """Você é o G.P.T. (Grill Potato Toast), o atendente virtual da \
++hamburgueria Science Burg Tech.
++
++Personalidade: simpático, direto e com um humor leve de "nerd de tecnologia" \
++— trocadilhos com termos de informática são bem-vindos, mas sem exagero e \
++sem atrapalhar a clareza. Fale português do Brasil, de forma natural.
++
++REGRAS QUE VOCÊ NUNCA QUEBRA:
++1. Só recomende itens que estejam na lista CARDÁPIO abaixo. Se o cliente \
++pedir algo que não existe lá, diga que não temos e ofereça a alternativa \
++mais parecida que exista.
++2. Nunca invente preço, ingrediente, prazo de entrega ou promoção. Se a \
++informação não estiver no CARDÁPIO ou nas PROMOÇÕES, diga que não sabe e \
++sugira falar com a equipe.
++3. Você não fecha pedidos, não altera carrinho e não cancela nada. Você \
++sugere; quem confirma é o cliente, pelo site.
++4. Não peça nem repita dados sensíveis (senha, cartão, CPF, endereço \
++completo).
++5. Se perguntarem algo fora do universo da hamburgueria, responda \
++brevemente que seu assunto é o cardápio e volte ao tema.
++6. Respostas curtas: no máximo 4 frases, a não ser que peçam detalhe.
++
++Se o cliente estiver indeciso, faça UMA pergunta objetiva (ex.: "prefere \
++carne, frango ou vegetariano?") em vez de listar o cardápio inteiro."""
++
++
++def montar_prompt_do_sistema(cardapio: str, promocoes: str) -> str:
++    partes = [INSTRUCOES, "\n\n=== CARDÁPIO (fonte da verdade) ===\n", cardapio]
++    if promocoes.strip():
++        partes.append("\n\n=== PROMOÇÕES ATIVAS ===\n")
++        partes.append(promocoes)
++    return "".join(partes)
++
++
++# ── Chamada ao provedor ──────────────────────────────────────────────────────
++
++
++def _post_json(url: str, corpo: dict, cabecalhos: dict) -> dict:
++    dados = json.dumps(corpo).encode("utf-8")
++    req = urllib.request.Request(url, data=dados, headers=cabecalhos, method="POST")
++    try:
++        with urllib.request.urlopen(req, timeout=IA_TIMEOUT_SEGUNDOS) as r:
++            return json.loads(r.read().decode("utf-8"))
++    except urllib.error.HTTPError as e:
++        detalhe = e.read().decode("utf-8", errors="replace")[:300]
++        raise IAIndisponivel(f"provedor respondeu {e.code}: {detalhe}") from e
++    except Exception as e:  # timeout, DNS, conexão recusada
++        raise IAIndisponivel(str(e)) from e
++
++
++def _gerar_gemini(sistema: str, historico: list[dict]) -> str:
++    url = (
++        f"https://generativelanguage.googleapis.com/v1beta/models/"
++        f"{IA_MODELO}:generateContent?key={IA_CHAVE}"
++    )
++    corpo = {
++        "systemInstruction": {"parts": [{"text": sistema}]},
++        "contents": [
++            {
++                "role": "model" if m["autor"] == "gpt" else "user",
++                "parts": [{"text": m["texto"]}],
++            }
++            for m in historico
++        ],
++        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 400},
++    }
++    dados = _post_json(url, corpo, {"Content-Type": "application/json"})
++    try:
++        return dados["candidates"][0]["content"]["parts"][0]["text"].strip()
++    except (KeyError, IndexError):
++        raise IAIndisponivel("resposta do provedor veio em formato inesperado")
++
++
++def _gerar_openai(sistema: str, historico: list[dict]) -> str:
++    mensagens = [{"role": "system", "content": sistema}]
++    mensagens += [
++        {"role": "assistant" if m["autor"] == "gpt" else "user", "content": m["texto"]}
++        for m in historico
++    ]
++    corpo = {"model": IA_MODELO, "messages": mensagens, "temperature": 0.7, "max_tokens": 400}
++    dados = _post_json(
++        "https://api.openai.com/v1/chat/completions",
++        corpo,
++        {"Content-Type": "application/json", "Authorization": f"Bearer {IA_CHAVE}"},
++    )
++    try:
++        return dados["choices"][0]["message"]["content"].strip()
++    except (KeyError, IndexError):
++        raise IAIndisponivel("resposta do provedor veio em formato inesperado")
++
++
++def _gerar_anthropic(sistema: str, historico: list[dict]) -> str:
++    corpo = {
++        "model": IA_MODELO,
++        "max_tokens": 400,
++        "system": sistema,
++        "messages": [
++            {"role": "assistant" if m["autor"] == "gpt" else "user", "content": m["texto"]}
++            for m in historico
++        ],
++    }
++    dados = _post_json(
++        "https://api.anthropic.com/v1/messages",
++        corpo,
++        {
++            "Content-Type": "application/json",
++            "x-api-key": IA_CHAVE,
++            "anthropic-version": "2023-06-01",
++        },
++    )
++    try:
++        return dados["content"][0]["text"].strip()
++    except (KeyError, IndexError):
++        raise IAIndisponivel("resposta do provedor veio em formato inesperado")
++
++
++_PROVEDORES = {"gemini": _gerar_gemini, "openai": _gerar_openai, "anthropic": _gerar_anthropic}
++
++
++def gerar_resposta(sistema: str, historico: list[dict]) -> str:
++    """Envia a conversa ao provedor e devolve o texto da resposta.
++
++    `historico` é uma lista de {"autor": "cliente"|"gpt", "texto": str},
++    do mais antigo para o mais recente, terminando na fala do cliente.
++    """
++    if not ia_configurada():
++        raise IAIndisponivel("IA_CHAVE não configurada no .env")
++
++    gerar = _PROVEDORES.get(IA_PROVEDOR)
++    if gerar is None:
++        raise IAIndisponivel(
++            f"provedor '{IA_PROVEDOR}' desconhecido — use gemini, openai ou anthropic"
++        )
++    return gerar(sistema, historico)
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/app/limite_gpt.py b/apps/api/app/limite_gpt.py
+--- a/apps/api/app/limite_gpt.py	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/api/app/limite_gpt.py	2026-09-08 21:30:03.847292273 +0000
+@@ -0,0 +1,60 @@
++"""Limite de uso do G.P.T., por visitante.
++
++Diferente do limite de login (que existe contra força bruta), este existe
++por um motivo financeiro: cada mensagem vira uma chamada paga ao provedor
++de IA. Sem freio, um script simples esgotaria a cota do projeto — e, num
++plano gratuito, derrubaria o atendente para todo mundo.
++
++São dois freios ao mesmo tempo:
++  - intervalo mínimo entre mensagens (evita rajada);
++  - teto de mensagens por hora (evita uso contínuo abusivo).
++
++Assim como o limite de login, a contagem vive na memória do processo. Serve
++para esta API, que roda num processo só. Com vários workers, cada um teria
++seu próprio contador — nesse cenário isto precisa virar Redis.
++"""
++
++import time
++from threading import Lock
++
++INTERVALO_MINIMO_SEGUNDOS = 3
++MAXIMO_POR_HORA = 30
++JANELA_SEGUNDOS = 3600
++
++_usos: dict[str, list[float]] = {}
++_trava = Lock()
++
++
++def segundos_de_espera(chave: str) -> int:
++    """Quantos segundos faltam até a próxima mensagem ser permitida (0 = livre)."""
++    with _trava:
++        agora = time.monotonic()
++        registros = [t for t in _usos.get(chave, []) if agora - t < JANELA_SEGUNDOS]
++        if registros:
++            _usos[chave] = registros
++        else:
++            _usos.pop(chave, None)
++
++        if not registros:
++            return 0
++
++        desde_a_ultima = agora - registros[-1]
++        if desde_a_ultima < INTERVALO_MINIMO_SEGUNDOS:
++            return int(INTERVALO_MINIMO_SEGUNDOS - desde_a_ultima) + 1
++
++        if len(registros) >= MAXIMO_POR_HORA:
++            # Livre quando o registro mais antigo sair da janela de uma hora.
++            return int(JANELA_SEGUNDOS - (agora - registros[0])) + 1
++
++        return 0
++
++
++def registrar_uso(chave: str) -> None:
++    with _trava:
++        _usos.setdefault(chave, []).append(time.monotonic())
++
++
++def limpar_tudo() -> None:
++    """Usado pelos testes, para um teste não interferir no outro."""
++    with _trava:
++        _usos.clear()
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/app/main.py b/apps/api/app/main.py
+--- a/apps/api/app/main.py	2026-09-08 21:30:03.809527945 +0000
++++ b/apps/api/app/main.py	2026-09-08 21:30:03.844083551 +0000
+@@ -15,6 +15,7 @@
+     combos,
+     cupons,
+     enderecos,
++    gpt,
+     mesas,
+     mesas_virtuais,
+     pedidos,
+@@ -59,6 +60,7 @@
+ app.include_router(avaliacoes.router, prefix="/api")
+ app.include_router(mesas_virtuais.router, prefix="/api")
+ app.include_router(mesas_virtuais.admin_router, prefix="/api")
++app.include_router(gpt.router, prefix="/api")
+ 
+ 
+ @app.get("/api/saude")
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/app/routers/gpt.py b/apps/api/app/routers/gpt.py
+--- a/apps/api/app/routers/gpt.py	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/api/app/routers/gpt.py	2026-09-08 21:30:03.846068073 +0000
+@@ -0,0 +1,129 @@
++"""G.P.T. — Grill Potato Toast, o atendente virtual da Science Burg Tech.
++
++Fluxo de uma conversa:
++  1. o navegador manda o histórico curto da conversa;
++  2. a API busca o cardápio e as promoções ATUAIS no banco;
++  3. tudo isso vira o prompt de sistema e vai para o provedor de IA;
++  4. a resposta em texto volta para a tela.
++
++Nada é gravado no banco: a conversa vive só na memória do navegador. Foi uma
++decisão consciente — guardar conversa de cliente traria responsabilidade de
++privacidade (LGPD) sem benefício para o objetivo do projeto.
++"""
++
++import psycopg
++from fastapi import APIRouter, Depends, HTTPException, Request, status
++
++from app.db import get_db
++from app.ia import IAIndisponivel, gerar_resposta, ia_configurada, montar_prompt_do_sistema
++from app.limite_gpt import registrar_uso, segundos_de_espera
++from app.schemas import GptConversaIn, GptRespostaOut
++
++router = APIRouter(prefix="/gpt", tags=["G.P.T. (atendente virtual)"])
++
++# Mensagem usada quando a IA não está configurada ou não respondeu. O site
++# continua funcionando normalmente: o atendente é um extra, não um pilar.
++FORA_DO_AR = (
++    "Opa! Meu processador deu uma esquentada e estou fora do ar por enquanto. "
++    "Dá uma olhada no cardápio que tem coisa boa lá."
++)
++
++
++def _montar_cardapio(db: psycopg.Connection) -> str:
++    """Descreve o cardápio em texto, para virar contexto do modelo.
++
++    Só produtos disponíveis entram: assim o G.P.T. nunca recomenda algo que
++    está fora de estoque. O preço vem do banco, não do modelo.
++    """
++    linhas = db.execute(
++        """
++        SELECT c.nome AS categoria, p.nome, p.descricao, p.preco, p.calorias, p.tag
++        FROM produtos p
++        JOIN categorias c ON c.id = p.categoria_id
++        WHERE p.disponivel = 1
++        ORDER BY c.ordem, p.id
++        """
++    ).fetchall()
++
++    if not linhas:
++        return "(cardápio vazio no momento)"
++
++    por_categoria: dict[str, list[str]] = {}
++    for l in linhas:
++        item = f"- {l['nome']} — R$ {l['preco']:.2f}"
++        if l["descricao"]:
++            item += f" — {l['descricao']}"
++        if l["calorias"]:
++            item += f" ({l['calorias']} kcal)"
++        if l["tag"]:
++            item += f" [{l['tag']}]"
++        por_categoria.setdefault(l["categoria"], []).append(item)
++
++    blocos = []
++    for categoria, itens in por_categoria.items():
++        blocos.append(f"{categoria}:\n" + "\n".join(itens))
++    return "\n\n".join(blocos)
++
++
++def _montar_promocoes(db: psycopg.Connection) -> str:
++    """Lista promoções vigentes, se a tabela existir neste banco."""
++    try:
++        linhas = db.execute(
++            """
++            SELECT titulo, descricao
++            FROM promocoes
++            WHERE ativo = TRUE
++              AND (inicio_em IS NULL OR inicio_em <= NOW())
++              AND (fim_em IS NULL OR fim_em >= NOW())
++            ORDER BY id
++            """
++        ).fetchall()
++    except psycopg.Error:
++        # Banco sem a migração de promoções: segue sem essa parte do contexto.
++        return ""
++    return "\n".join(f"- {l['titulo']}: {l['descricao'] or ''}".strip() for l in linhas)
++
++
++def _chave_uso(request: Request) -> str:
++    ip = request.client.host if request.client else "desconhecido"
++    return f"gpt:{ip}"
++
++
++@router.get("/status")
++def status_gpt() -> dict:
++    """Diz ao front se vale a pena mostrar o botão do atendente."""
++    return {"disponivel": ia_configurada()}
++
++
++@router.post("/conversar", response_model=GptRespostaOut)
++def conversar(
++    dados: GptConversaIn,
++    request: Request,
++    db: psycopg.Connection = Depends(get_db),
++) -> GptRespostaOut:
++    # Cada chamada ao provedor custa dinheiro e consome cota. Sem limite,
++    # um script conseguiria esgotar a cota do projeto em minutos.
++    espera = segundos_de_espera(_chave_uso(request))
++    if espera:
++        raise HTTPException(
++            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
++            detail=f"Calma aí! Espere {espera} segundo(s) antes de mandar outra mensagem.",
++            headers={"Retry-After": str(espera)},
++        )
++
++    if not ia_configurada():
++        return GptRespostaOut(resposta=FORA_DO_AR, disponivel=False)
++
++    sistema = montar_prompt_do_sistema(_montar_cardapio(db), _montar_promocoes(db))
++    historico = [{"autor": m.autor, "texto": m.texto} for m in dados.mensagens]
++
++    registrar_uso(_chave_uso(request))
++
++    try:
++        resposta = gerar_resposta(sistema, historico)
++    except IAIndisponivel:
++        # O erro real fica no log do servidor; o cliente vê algo amigável.
++        # Detalhe de provedor ou chave nunca vaza para o navegador.
++        return GptRespostaOut(resposta=FORA_DO_AR, disponivel=False)
++
++    return GptRespostaOut(resposta=resposta, disponivel=True)
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/app/schemas.py b/apps/api/app/schemas.py
+--- a/apps/api/app/schemas.py	2026-09-08 21:30:03.812176897 +0000
++++ b/apps/api/app/schemas.py	2026-09-08 21:30:03.846282616 +0000
+@@ -567,3 +567,25 @@
+ 
+ class AvaliacaoModeracaoIn(BaseModel):
+     aprovado: bool
++
++
++# ── G.P.T. (Grill Potato Toast) ─────────────────────────────────────────────
++
++
++class GptMensagemIn(BaseModel):
++    # "cliente" = quem digitou; "gpt" = resposta anterior do atendente.
++    autor: Literal["cliente", "gpt"]
++    # Teto de tamanho: uma pergunta de cardápio não precisa de mais que isso,
++    # e o limite evita que alguém use nosso endpoint para processar textões.
++    texto: str = Field(min_length=1, max_length=600)
++
++
++class GptConversaIn(BaseModel):
++    # Só as últimas trocas são enviadas: histórico longo encarece a chamada
++    # sem melhorar a resposta num atendimento curto como este.
++    mensagens: list[GptMensagemIn] = Field(min_length=1, max_length=12)
++
++
++class GptRespostaOut(BaseModel):
++    resposta: str
++    disponivel: bool
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/api/tests/test_gpt.py b/apps/api/tests/test_gpt.py
+--- a/apps/api/tests/test_gpt.py	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/api/tests/test_gpt.py	2026-09-08 21:30:03.985350527 +0000
+@@ -0,0 +1,164 @@
++"""Testes do G.P.T. (Grill Potato Toast).
++
++Estes testes não tocam no provedor de IA nem no PostgreSQL: o banco é
++substituído por um objeto falso e a função que chama o provedor é trocada
++por uma versão controlada. Assim a suíte roda offline, de graça e rápido.
++"""
++
++import os
++
++import pytest
++
++os.environ.setdefault("IA_CHAVE", "")
++
++from fastapi.testclient import TestClient  # noqa: E402
++
++from app import limite_gpt  # noqa: E402
++from app.ia import IAIndisponivel  # noqa: E402
++from app.main import app  # noqa: E402
++from app.routers import gpt as rgpt  # noqa: E402
++
++
++class _CursorFalso:
++    def __init__(self, linhas):
++        self._linhas = linhas
++
++    def fetchall(self):
++        return self._linhas
++
++
++class _BancoFalso:
++    """Devolve um cardápio e uma promoção fixos, sem PostgreSQL."""
++
++    def execute(self, sql, *args):
++        if "FROM produtos" in sql:
++            return _CursorFalso([{
++                "categoria": "Burgers", "nome": "Bit Burguer",
++                "descricao": "carne e cheddar", "preco": 32.0,
++                "calorias": 700, "tag": "Top",
++            }])
++        return _CursorFalso([{"titulo": "Terça em dobro", "descricao": "2 por 1"}])
++
++
++@pytest.fixture()
++def client():
++    app.dependency_overrides[rgpt.get_db] = lambda: _BancoFalso()
++    limite_gpt.limpar_tudo()
++    with TestClient(app) as c:
++        yield c
++    limite_gpt.limpar_tudo()
++    app.dependency_overrides.pop(rgpt.get_db, None)
++
++
++@pytest.fixture()
++def ia_ligada(monkeypatch):
++    """Liga o atendente com um provedor controlado e devolve o que foi enviado."""
++    capturado = {}
++
++    def gerar(sistema, historico):
++        capturado["sistema"] = sistema
++        capturado["historico"] = historico
++        return "Recomendo o Bit Burguer!"
++
++    monkeypatch.setattr(rgpt, "ia_configurada", lambda: True)
++    monkeypatch.setattr(rgpt, "gerar_resposta", gerar)
++    return capturado
++
++
++# ── Sem IA configurada ──────────────────────────────────────────────────────
++
++
++def test_status_indica_indisponivel_sem_chave(client):
++    assert client.get("/api/gpt/status").json() == {"disponivel": False}
++
++
++def test_sem_chave_responde_amigavel_e_nao_quebra(client):
++    r = client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "oi"}]})
++    assert r.status_code == 200
++    assert r.json()["disponivel"] is False
++    assert "fora do ar" in r.json()["resposta"].lower()
++
++
++def test_ia_desligada_nao_consome_cota(client):
++    """Sem chamada paga, não faz sentido gastar o limite do visitante."""
++    client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "a"}]})
++    r = client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "b"}]})
++    assert r.status_code == 200
++
++
++# ── Validação de entrada ────────────────────────────────────────────────────
++
++
++@pytest.mark.parametrize("corpo", [
++    {"mensagens": []},
++    {"mensagens": [{"autor": "cliente", "texto": "x" * 601}]},
++    {"mensagens": [{"autor": "invasor", "texto": "oi"}]},
++    {"mensagens": [{"autor": "cliente", "texto": ""}]},
++])
++def test_recusa_entrada_invalida(client, corpo):
++    assert client.post("/api/gpt/conversar", json=corpo).status_code == 422
++
++
++# ── Com IA ligada ───────────────────────────────────────────────────────────
++
++
++def test_responde_usando_o_provedor(client, ia_ligada):
++    r = client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "o que tem?"}]})
++    assert r.status_code == 200
++    assert r.json() == {"resposta": "Recomendo o Bit Burguer!", "disponivel": True}
++
++
++def test_cardapio_real_vai_no_prompt(client, ia_ligada):
++    """O modelo só pode recomendar o que existe: o cardápio do banco entra
++    no contexto, com o preço vindo da tabela e não da imaginação dele."""
++    client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "oi"}]})
++    sistema = ia_ligada["sistema"]
++    assert "Bit Burguer" in sistema
++    assert "32.00" in sistema
++    assert "Terça em dobro" in sistema
++    assert "NUNCA QUEBRA" in sistema
++
++
++def test_historico_repassado_na_ordem(client, ia_ligada):
++    conversa = [
++        {"autor": "cliente", "texto": "oi"},
++        {"autor": "gpt", "texto": "olá!"},
++        {"autor": "cliente", "texto": "tem vegetariano?"},
++    ]
++    client.post("/api/gpt/conversar", json={"mensagens": conversa})
++    assert ia_ligada["historico"] == conversa
++
++
++def test_limite_bloqueia_mensagens_em_rajada(client, ia_ligada):
++    client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "oi"}]})
++    r = client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "de novo"}]})
++    assert r.status_code == 429
++    assert "Retry-After" in r.headers
++
++
++# ── Falha do provedor ───────────────────────────────────────────────────────
++
++
++def test_falha_do_provedor_nao_derruba_o_site(client, monkeypatch):
++    """Se o provedor cair, o cliente vê uma mensagem simpática — não um 500."""
++    def quebrar(sistema, historico):
++        raise IAIndisponivel("chave invalida: sk-SEGREDO123")
++
++    monkeypatch.setattr(rgpt, "ia_configurada", lambda: True)
++    monkeypatch.setattr(rgpt, "gerar_resposta", quebrar)
++
++    r = client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "oi"}]})
++    assert r.status_code == 200
++    assert r.json()["disponivel"] is False
++
++
++def test_erro_do_provedor_nao_vaza_para_o_cliente(client, monkeypatch):
++    """Detalhe de chave ou de provedor jamais pode aparecer no navegador."""
++    def quebrar(sistema, historico):
++        raise IAIndisponivel("chave invalida: sk-SEGREDO123")
++
++    monkeypatch.setattr(rgpt, "ia_configurada", lambda: True)
++    monkeypatch.setattr(rgpt, "gerar_resposta", quebrar)
++
++    r = client.post("/api/gpt/conversar", json={"mensagens": [{"autor": "cliente", "texto": "oi"}]})
++    assert "SEGREDO123" not in r.text
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/web/src/app/components/common/GptChat.tsx b/apps/web/src/app/components/common/GptChat.tsx
+--- a/apps/web/src/app/components/common/GptChat.tsx	1970-01-01 00:00:00.000000000 +0000
++++ b/apps/web/src/app/components/common/GptChat.tsx	2026-09-08 21:30:03.989735335 +0000
+@@ -0,0 +1,156 @@
++import { useEffect, useRef, useState } from "react";
++import { Bot, Send, X } from "lucide-react";
++import { gptConversar, gptStatus } from "@/app/lib/api";
++
++type Mensagem = { autor: "cliente" | "gpt"; texto: string };
++
++// Só as últimas trocas são enviadas ao servidor: histórico longo encarece a
++// chamada ao provedor sem melhorar a resposta num atendimento curto.
++const MAX_HISTORICO = 12;
++
++const SAUDACAO: Mensagem = {
++  autor: "gpt",
++  texto:
++    "Fala! Sou o G.P.T. — Grill Potato Toast. Posso te ajudar a escolher no cardápio. O que você tá com vontade de comer?",
++};
++
++const SUGESTOES = [
++  "O que vocês têm de mais pedido?",
++  "Tem opção vegetariana?",
++  "Qual o combo com melhor custo?",
++];
++
++export function GptChat() {
++  const [disponivel, setDisponivel] = useState(false);
++  const [aberto, setAberto] = useState(false);
++  const [mensagens, setMensagens] = useState<Mensagem[]>([SAUDACAO]);
++  const [texto, setTexto] = useState("");
++  const [carregando, setCarregando] = useState(false);
++  const [erro, setErro] = useState<string | null>(null);
++
++  const fimDaLista = useRef<HTMLDivElement>(null);
++
++  // O botão só aparece se a API confirmar que a IA está configurada. Sem
++  // isso, o site mostraria um atendente que nunca responde.
++  useEffect(() => {
++    gptStatus()
++      .then((r) => setDisponivel(r.disponivel))
++      .catch(() => setDisponivel(false));
++  }, []);
++
++  useEffect(() => {
++    fimDaLista.current?.scrollIntoView({ behavior: "smooth" });
++  }, [mensagens, carregando]);
++
++  if (!disponivel) return null;
++
++  async function enviar(pergunta: string) {
++    const limpa = pergunta.trim();
++    if (!limpa || carregando) return;
++
++    const novoHistorico: Mensagem[] = [...mensagens, { autor: "cliente", texto: limpa }];
++    setMensagens(novoHistorico);
++    setTexto("");
++    setErro(null);
++    setCarregando(true);
++
++    try {
++      const r = await gptConversar(novoHistorico.slice(-MAX_HISTORICO));
++      setMensagens((atual) => [...atual, { autor: "gpt", texto: r.resposta }]);
++    } catch (e) {
++      // Inclui o 429 do limite de uso, que traz uma mensagem já pronta.
++      setErro(e instanceof Error ? e.message : "Não consegui responder agora.");
++    } finally {
++      setCarregando(false);
++    }
++  }
++
++  return (
++    <>
++      {/* Botão flutuante */}
++      <button
++        onClick={() => setAberto((v) => !v)}
++        aria-label={aberto ? "Fechar o G.P.T." : "Conversar com o G.P.T."}
++        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition hover:scale-105 active:scale-95"
++      >
++        {aberto ? <X size={22} /> : <Bot size={24} />}
++      </button>
++
++      {aberto && (
++        <div className="fixed bottom-24 right-6 z-50 flex h-[30rem] w-[22rem] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#14142a] shadow-2xl">
++          <header className="flex items-center gap-3 border-b border-white/10 px-4 py-3">
++            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-white">
++              <Bot size={18} />
++            </div>
++            <div>
++              <p className="text-sm font-bold text-white">G.P.T.</p>
++              <p className="text-xs text-white/50">Grill Potato Toast</p>
++            </div>
++          </header>
++
++          <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
++            {mensagens.map((m, i) => (
++              <div
++                key={i}
++                className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
++                  m.autor === "cliente"
++                    ? "ml-auto bg-primary text-white"
++                    : "bg-white/5 text-white/90"
++                }`}
++              >
++                {m.texto}
++              </div>
++            ))}
++
++            {mensagens.length === 1 && (
++              <div className="space-y-2 pt-1">
++                {SUGESTOES.map((s) => (
++                  <button
++                    key={s}
++                    onClick={() => enviar(s)}
++                    className="block w-full rounded-lg border border-white/10 px-3 py-2 text-left text-xs text-white/70 transition hover:border-primary hover:text-white"
++                  >
++                    {s}
++                  </button>
++                ))}
++              </div>
++            )}
++
++            {carregando && (
++              <div className="w-fit rounded-xl bg-white/5 px-3 py-2 text-sm text-white/50">
++                preparando a resposta…
++              </div>
++            )}
++            {erro && <p className="text-xs text-red-400">{erro}</p>}
++
++            <div ref={fimDaLista} />
++          </div>
++
++          <div className="border-t border-white/10 p-3">
++            <div className="flex gap-2">
++              <input
++                value={texto}
++                onChange={(e) => setTexto(e.target.value)}
++                onKeyDown={(e) => e.key === "Enter" && enviar(texto)}
++                maxLength={600}
++                placeholder="Pergunte sobre o cardápio…"
++                className="flex-1 rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30 focus:ring-1 focus:ring-primary"
++              />
++              <button
++                onClick={() => enviar(texto)}
++                disabled={carregando || !texto.trim()}
++                aria-label="Enviar"
++                className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-white transition disabled:opacity-40"
++              >
++                <Send size={16} />
++              </button>
++            </div>
++            <p className="pt-2 text-center text-[10px] text-white/30">
++              Sugestões geradas por IA — confira o cardápio antes de pedir.
++            </p>
++          </div>
++        </div>
++      )}
++    </>
++  );
++}
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/web/src/app/layout/RootLayout.tsx b/apps/web/src/app/layout/RootLayout.tsx
+--- a/apps/web/src/app/layout/RootLayout.tsx	2026-09-08 21:30:03.820747786 +0000
++++ b/apps/web/src/app/layout/RootLayout.tsx	2026-09-08 21:30:03.994051804 +0000
+@@ -3,6 +3,7 @@
+ import { Header } from "@/app/components/layout/Header";
+ import { Footer } from "@/app/components/layout/Footer";
+ import { CartDrawer } from "@/app/components/layout/CartDrawer";
++import { GptChat } from "@/app/components/common/GptChat";
+ import { useCart } from "@/app/hooks/useCart";
+ import type { CartContext } from "@/app/types";
+ 
+@@ -26,6 +27,10 @@
+         onChangeQty={changeQty}
+         onClearCart={clearCart}
+       />
++      {/* Atendente virtual: some sozinho se a IA não estiver configurada
++          no servidor, então o site funciona igual sem ele. Fica só nas
++          páginas públicas — o painel administrativo usa outro layout. */}
++      <GptChat />
+     </div>
+   );
+ }
+diff -ruN '--exclude=node_modules' '--exclude=.venv' '--exclude=__pycache__' '--exclude=dist' a/apps/web/src/app/lib/api.ts b/apps/web/src/app/lib/api.ts
+--- a/apps/web/src/app/lib/api.ts	2026-09-08 21:30:03.820833436 +0000
++++ b/apps/web/src/app/lib/api.ts	2026-09-08 21:30:03.994325780 +0000
+@@ -414,3 +414,18 @@
+ 
+ export const adminDesbanirUsuarioMesaVirtual = (token: string, usuarioId: number) =>
+   apiFetch<void>(`/admin/mesas-virtuais/usuarios/${usuarioId}/banir`, { method: "DELETE", headers: authHeader(token) });
++
++
++// ── G.P.T. (Grill Potato Toast) ────────────────────────────────────────────
++
++export type GptMensagem = { autor: "cliente" | "gpt"; texto: string };
++
++/** Diz se a IA está configurada no servidor (o botão só aparece se sim). */
++export const gptStatus = () => apiFetch<{ disponivel: boolean }>("/gpt/status");
++
++/** Envia as últimas trocas e devolve a resposta do atendente. */
++export const gptConversar = (mensagens: GptMensagem[]) =>
++  apiFetch<{ resposta: string; disponivel: boolean }>("/gpt/conversar", {
++    method: "POST",
++    body: JSON.stringify({ mensagens }),
++  });
